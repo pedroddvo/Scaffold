@@ -1,0 +1,108 @@
+cabal-version: 2.2
+
+-- This file has been generated from package.yaml by hpack version 0.35.1.
+--
+-- see: https://github.com/sol/hpack
+
+name:           Scaffold
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/githubuser/Scaffold#readme>
+homepage:       https://github.com/githubuser/Scaffold#readme
+bug-reports:    https://github.com/githubuser/Scaffold/issues
+author:         Author name here
+maintainer:     example@example.com
+copyright:      2024 Author name here
+license:        BSD-3-Clause
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/githubuser/Scaffold
+
+library
+  exposed-modules:
+      Analyse.Desugar
+      Analyse.Infer
+      Analyse.Resolver
+      Analyse.Reuse
+      Analyse.Subtype
+      Analyse.TcContext
+      Analyse.Type
+      Analyse.Unique
+      Core
+      Emit.C
+      Error
+      Span
+      Syntax.Ast
+      Syntax.Name
+      Syntax.Parser
+  other-modules:
+      Paths_Scaffold
+  autogen-modules:
+      Paths_Scaffold
+  hs-source-dirs:
+      src
+  default-extensions:
+      ImportQualifiedPost
+      LambdaCase
+      OverloadedStrings
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+  build-depends:
+      base >=4.7 && <5
+    , containers
+    , megaparsec
+    , mtl
+    , text
+    , text-builder
+  default-language: Haskell2010
+
+executable Scaffold-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_Scaffold
+  autogen-modules:
+      Paths_Scaffold
+  hs-source-dirs:
+      app
+  default-extensions:
+      ImportQualifiedPost
+      LambdaCase
+      OverloadedStrings
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      Scaffold
+    , base >=4.7 && <5
+    , containers
+    , megaparsec
+    , mtl
+    , text
+    , text-builder
+  default-language: Haskell2010
+
+test-suite Scaffold-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_Scaffold
+  autogen-modules:
+      Paths_Scaffold
+  hs-source-dirs:
+      test
+  default-extensions:
+      ImportQualifiedPost
+      LambdaCase
+      OverloadedStrings
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      Scaffold
+    , base >=4.7 && <5
+    , containers
+    , megaparsec
+    , mtl
+    , text
+    , text-builder
+  default-language: Haskell2010

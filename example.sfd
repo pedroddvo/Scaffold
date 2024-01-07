@@ -1,0 +1,19 @@
+extern type Int = "int"
+extern type Unit = "void"
+extern type Handle = "FILE*"
+extern type String = "const char*"
+
+extern def IO.getStdout(): Handle = "sfd_get_stdout"
+extern def Handle.putStr(handle: Handle, str: String): Unit = "sfd_putstr"
+extern def Handle.putInt(handle: Handle, n: Int): Unit = "sfd_putint"
+
+extern def Int.add(a b: Int): Int = "sfd_int_add"
+
+def Int.alphabet(pos: Int, stdout: Handle): Int = 
+  let _ = stdout.putInt(pos.add(97));
+  match pos { 25 => 0, _ => pos.add(1).alphabet(stdout) }
+
+def main(argc: Int) : Int =
+  let stdout = IO.getStdout();
+  let _ = Int.alphabet(0, stdout);
+  0
