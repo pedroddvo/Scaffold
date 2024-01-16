@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
 module Emit.C where
@@ -7,26 +8,28 @@ import Analyse.Type qualified as Type
 import Analyse.Unique (Unique)
 import Analyse.Unique qualified as Unique
 import Control.Monad.State (State, evalState, gets, modify)
-import Core (Alt (Alt), AltCon (..), Core (..), Def (..), Expr (..), ExternDef (extern_def_args, extern_def_name, extern_def_return_type), Literal (..), TypeDef (..))
+import Core (Alt (Alt), AltCon (..), Arg (..), Core (..), Def (..), Expr (..), ExternDef (extern_def_args, extern_def_name, extern_def_return_type), Literal (..), TypeDef (..))
 import Data.Bifunctor qualified
 import Data.Foldable (Foldable (foldl', foldr'))
 import Data.Map (Map)
 import Data.Map qualified as Map
+import Data.MultiSet qualified as MS
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Debug.Trace (traceShowM, traceShowId)
 import GHC.List qualified as List
 import Syntax.Name (Name)
 import Syntax.Name qualified as Name
 import Text.Builder
 import Text.Builder qualified as Builder
-import Debug.Trace (traceShowM)
 
 data EmitState = EmitState
   { es_vars :: Map Unique Type,
     es_extern_vars :: Map Unique Text,
-    es_placeholder_id :: Unique.Id
+    es_placeholder_id :: Unique.Id,
+    es_rc :: Map Unique Int
   }
 
 type EmitM = State EmitState
@@ -63,7 +66,8 @@ emit core uid vars = Builder.run (evalState builder emitState)
       EmitState
         { es_vars = vars,
           es_extern_vars = Map.fromList externVars,
-          es_placeholder_id = uid
+          es_placeholder_id = uid,
+          es_rc = Map.fromList $ map (,1) (Map.keys vars)
         }
 
     header = text "#include <scaffold.h>"
@@ -137,9 +141,17 @@ emitExpr i' mapEnd expr = do
     emitExpr' i = \case
       Core.Var name -> emitVar name
       Core.Lit lit -> return ([], emitLiteral lit)
-      Core.App e args -> emitApp i e args
+      Core.App _ e args -> emitApp i e args
       Core.Let name t e e' -> emitLet i name t e e'
       Core.Case scrutinee scrutineeT alts resultT -> emitCase i scrutinee scrutineeT alts resultT
+      Core.Dup x e -> do
+        let stmt = "sfd_inc_ref(" <> emitName x <> ")"
+        (stmts, e') <- emitExpr' i e
+        return (stmt : stmts, e')
+      Core.Drop x e -> do
+        let stmt = "sfd_dec_ref(" <> emitName x <> ")"
+        (stmts, e') <- emitExpr' i e
+        return (stmt : stmts, e')
       Core.Lam {} -> undefined
 
     emitCase :: Indent -> Core.Expr -> Type -> [Core.Alt] -> Type -> EmitM ([Builder], Builder)
@@ -154,7 +166,7 @@ emitExpr i' mapEnd expr = do
 
     emitCaseAlts :: Indent -> Builder -> Builder -> [Core.Alt] -> EmitM Builder
     emitCaseAlts i res scrut [] = return ""
-    emitCaseAlts i res scrut ((Core.Alt con e) : rest) = do
+    emitCaseAlts i res scrut ((Core.Alt con t e) : rest) = do
       e' <- emitExpr (i + 1) (\e' -> res <> " = " <> e' <> ";\n") e
       case con of
         Core.AltLiteral lit -> do
@@ -170,6 +182,17 @@ emitExpr i' mapEnd expr = do
               <> "}"
               <> (if List.null rest then "" else " else ")
               <> rest'
+        Core.AltBind x -> do
+          return $
+            "{\n"
+              <> indent (i + 1)
+              <> emitType t
+              <> " = "
+              <> emitName x
+              <> ";\n"
+              <> e'
+              <> indent i
+              <> "}"
         Core.AltWildcard -> return $ "{\n" <> e' <> indent i <> "}"
 
     emitVar :: Unique -> EmitM ([Builder], Builder)
@@ -178,10 +201,10 @@ emitExpr i' mapEnd expr = do
         Nothing -> return ([], emitName name)
         Just cident -> return ([], text cident)
 
-    emitApp :: Indent -> Core.Expr -> [Core.Expr] -> EmitM ([Builder], Builder)
+    emitApp :: Indent -> Core.Expr -> [Core.Arg] -> EmitM ([Builder], Builder)
     emitApp i f args = do
       (stmts, f') <- emitExpr' i f
-      emittedArgs <- mapM (emitExpr' 0) args
+      emittedArgs <- mapM (\(Core.Arg e _) -> emitExpr' 0 e) args
       let (stmts', args') = foldl' (\(ss, sa) (s, a) -> (ss ++ s, sa ++ [a])) (stmts, []) emittedArgs
       return (stmts', f' <> "(" <> intercalate ", " args' <> ")")
 
@@ -195,11 +218,12 @@ emitExpr i' mapEnd expr = do
 emitLiteral :: Core.Literal -> Builder
 emitLiteral = \case
   LitNumeric num -> text num
-  LitString str -> "\"" <> text str <> "\""
+  LitString str -> "sfd_string_mk(\"" <> text str <> "\")"
 
 emitType :: Type -> Builder
 emitType = \case
   Type.Base name -> emitName name
+  Type.Borrow e -> emitType e
   _ -> undefined
 
 emitName :: Unique -> Builder

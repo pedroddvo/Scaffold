@@ -5,7 +5,7 @@ import Analyse.Type qualified as Type
 import Analyse.Unique (Unique)
 import Analyse.Unique qualified as Unique
 import Control.Monad.Except (ExceptT, runExceptT)
-import Control.Monad.State (MonadState (get), State, evalState, gets, modify)
+import Control.Monad.State (MonadState (get), State, evalState, gets, modify, runState)
 import Data.Functor ((<&>))
 import Data.Map (Map)
 import Data.Map qualified as Map
@@ -16,6 +16,7 @@ import Syntax.Name (Name)
 
 data TcState = TcState
   { tc_vars :: Map Unique Type,
+    tc_types :: Map Unique Type,
     tc_solved :: Map Unique Type,
     tc_resolved_vars :: ResolvedMap,
     tc_resolved_vars_kv :: [(Name Text, Unique)],
@@ -41,9 +42,13 @@ apply env t' = case t' of
     Nothing -> t'
   Type.Arrow a b -> Type.Arrow (apply env a) (apply env b)
   Type.Tuple as -> Type.Tuple (map (apply env) as)
+  Type.Borrow t -> Type.Borrow (apply env t)
 
 instantiate :: Unique -> Type -> TcCtxM ()
 instantiate name t = modify (\s -> s {tc_vars = Map.insert name t (tc_vars s)})
+
+instantiateType :: Unique -> Type -> TcCtxM ()
+instantiateType name t = modify (\s -> s {tc_types = Map.insert name t (tc_types s)})
 
 solve :: Unique -> Type -> TcCtxM ()
 solve exist t = modify (\s -> s {tc_solved = Map.insert exist t (tc_solved s)})
@@ -51,8 +56,8 @@ solve exist t = modify (\s -> s {tc_solved = Map.insert exist t (tc_solved s)})
 getEnv :: TcCtxM TcState
 getEnv = get
 
-runTc :: ResolvedMap -> TcCtxM a -> Either TcError a
-runTc m =
+runTc :: ResolvedMap -> Unique.Id -> TcCtxM a -> Either TcError a
+runTc m uuid =
   flip evalState tcState
     . runExceptT
   where
@@ -60,7 +65,8 @@ runTc m =
       TcState
         { tc_vars = Map.empty,
           tc_solved = Map.empty,
-          tc_exist_counter = 0,
+          tc_types = Map.empty,
+          tc_exist_counter = uuid,
           tc_resolved_vars = m,
           tc_resolved_vars_kv = Map.toList m
         }

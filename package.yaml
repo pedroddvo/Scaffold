@@ -26,6 +26,7 @@ dependencies:
 - containers
 - mtl
 - text-builder
+- multiset
 
 default-extensions:
 - ImportQualifiedPost

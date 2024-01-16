@@ -1,19 +1,14 @@
 extern type Int = "int"
-extern type Unit = "void"
-extern type Handle = "FILE*"
-extern type String = "const char*"
+extern type USize = "size_t"
+extern type String = "sfd_object*"
 
-extern def IO.getStdout(): Handle = "sfd_get_stdout"
-extern def Handle.putStr(handle: Handle, str: String): Unit = "sfd_putstr"
-extern def Handle.putInt(handle: Handle, n: Int): Unit = "sfd_putint"
+extern def Int.toUSize(a : Int) : USize = "sfd_int_to_usize"
 
-extern def Int.add(a b: Int): Int = "sfd_int_add"
+extern def String.alloc(size cap : USize): String = "sfd_alloc_string"
+extern def String.append(a : String, b : &String) : String = "sfd_string_append"
 
-def Int.alphabet(pos: Int, stdout: Handle): Int = 
-  let _ = stdout.putInt(pos.add(97));
-  match pos { 25 => 0, _ => pos.add(1).alphabet(stdout) }
-
-def main(argc: Int) : Int =
-  let stdout = IO.getStdout();
-  let _ = Int.alphabet(0, stdout);
+def main() : Int =
+  let a = String.alloc(0.toUSize(), 10.toUSize());
+  let b = "world!\n";
+  let c = a.append(b).append("hello");
   0

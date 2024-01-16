@@ -80,6 +80,7 @@ curly = M.between (symbol "{") (symbol "}") . lexeme
 typeBase :: Parser (TNode Ast.TypeNode)
 typeBase =
   (Ast.TSymbol <$> nameP)
+    <|> (Ast.TBorrow <$> (symbol "&" >> typeP))
     <|> paren typeNode
 
 typeArrow :: Parser (TNode Ast.TypeNode)

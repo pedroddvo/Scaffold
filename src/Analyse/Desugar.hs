@@ -2,9 +2,10 @@ module Analyse.Desugar where
 
 import Analyse.Infer (Typed (nodeType), wfType)
 import Analyse.Type (Type)
+import Analyse.Type qualified as Type
 import Analyse.Unique (Unique)
 import Analyse.Unique qualified as Unique
-import Control.Monad.State (State, evalState, execState, gets, modify)
+import Control.Monad.State (State, evalState, execState, gets, modify, zipWithM)
 import Core (Core (..))
 import Core qualified
 import Data.Map (Map)
@@ -75,8 +76,11 @@ desugarExpr thisNode@(Ast.Node kind d) = case kind of
     desugarExpr (Ast.Node (Ast.App f (a : as)) d)
   Ast.App a as -> do
     a' <- desugarExpr a
-    as' <- mapM desugarExpr as
-    return $ Core.App a' as'
+    let f = Type.unarrow $ nodeType a
+    as' <- zipWithM desugarArg as f
+    let e = Core.App (nodeType thisNode) a' (map snd as')
+    let e' = foldr ($) e (concatMap fst as')
+    return e'
   Ast.Lam p e -> do
     (name, _) <- desugarPattern p
     e' <- desugarExpr e
@@ -90,11 +94,22 @@ desugarExpr thisNode@(Ast.Node kind d) = case kind of
     return $ Core.Case e' (nodeType e) branches' (nodeType thisNode)
   _ -> undefined
 
+desugarArg :: Typed a => Ast.Expr Unique a -> Type -> DesugarM ([Core.Expr -> Core.Expr], Core.Arg)
+desugarArg e@(Ast.Node kind _) t = do
+  e' <- desugarExpr e
+  case (kind, t) of
+    (Ast.Symbol _, Type.Borrow _) -> do
+      return ([], Core.Arg e' Core.PassBorrow)
+    (_, Type.Borrow _) -> do
+      p <- fresh
+      return ([Core.Let p t e'], Core.Arg (Core.Var p) Core.PassBorrow)
+    _ -> return ([], Core.Arg e' Core.PassOwned)
+
 desugarBranch :: Typed a => Ast.MatchBranch Unique a -> DesugarM Core.Alt
 desugarBranch (pat, e) = do
-  (pat', _) <- desugarPattern pat
+  (pat', t) <- desugarPattern pat
   e' <- desugarExpr e
-  return $ Core.Alt pat' e'
+  return $ Core.Alt pat' t e'
 
 desugarProgram :: Typed a => Ast.Expr Unique a -> DesugarM ()
 desugarProgram (Ast.Node kind _) = case kind of

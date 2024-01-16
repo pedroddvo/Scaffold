@@ -61,6 +61,7 @@ resolveType env ty =
    in case Ast.node_kind ty of
         Ast.TSymbol alpha -> node Ast.TSymbol ty <$> check env sp alpha
         Ast.TArrow a b -> node2 Ast.TArrow ty <$> resolveType env a <*> resolveType env b
+        Ast.TBorrow e -> node Ast.TBorrow ty <$> resolveType env e
 
 instantiatePattern :: ResolvedMap -> Ast.Pattern (Name Text) Span -> ResolverM (ResolvedMap, Ast.Pattern Unique Span)
 instantiatePattern env pat =
@@ -112,8 +113,8 @@ resolveExpr env expr =
         Ast.ExternDef name args ret cident rest -> do
           ret' <- resolveType env ret
           (env', name') <- instantiate env name
-          (env'', args') <- foldM (\(env'', pats) pat -> fmap (: pats) <$> instantiatePattern env'' pat) (env', []) args
-          rest' <- resolveExpr env'' rest
+          (_, args') <- foldM (\(env'', pats) pat -> fmap (: pats) <$> instantiatePattern env'' pat) (env', []) args
+          rest' <- resolveExpr env' rest
           return $ Ast.Node (Ast.ExternDef name' (reverse args') ret' cident rest') sp
         Ast.Type extern name cident rest -> do
           (env', name') <- case (extern, Name.moduleName name `elem` intrinsicTypes) of

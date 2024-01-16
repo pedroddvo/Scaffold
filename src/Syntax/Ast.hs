@@ -17,6 +17,7 @@ data Node n a = Node
 data TypeNode v a
   = TSymbol v
   | TArrow (Type v a) (Type v a)
+  | TBorrow (Type v a)
   deriving (Show, Functor, Foldable, Traversable)
 
 type Type v = Node (TypeNode v)

@@ -6,8 +6,8 @@
 
 module Analyse.Infer where
 
-import Analyse.Subtype (applyType, subtype)
-import Analyse.TcContext (TcCtxM, TcError (TcError), TcState (..), apply, fresh, getEnv, instantiate, solve)
+import Analyse.Subtype (subtype)
+import Analyse.TcContext (TcCtxM, TcError (TcError), TcState (..), apply, fresh, getEnv, instantiate, solve, instantiateType)
 import Analyse.Type (Type)
 import Analyse.Type qualified as Type
 import Analyse.Unique (Unique)
@@ -43,6 +43,9 @@ instance Spanned (Span, a) where
 wfType :: Ast.Type Unique Span -> Ast.Type Unique (Span, Type)
 wfType (Ast.Node ty sp) = case ty of
   Ast.TSymbol alpha -> Ast.Node (Ast.TSymbol alpha) (sp, Type.Base alpha)
+  Ast.TBorrow a -> 
+    let a' = wfType a
+    in Ast.Node (Ast.TBorrow a') (sp, Type.Borrow $ nodeType a')
   Ast.TArrow a b ->
     let a' = wfType a
         b' = wfType b
@@ -129,14 +132,15 @@ lookupName sp namespaceUniq rest =
     Just (namespace, _) -> do
       let fullName = namespace <> rest
       Map.lookup fullName <$> gets tc_resolved_vars >>= \case
-        Nothing -> throwError $ undefinedSymbol (Name.moduleName fullName)
+        Nothing -> throwError $ undefinedSymbol sp (Name.moduleName fullName)
         Just symbol ->
           synthSymbol symbol >>= \case
             Just t -> return (symbol, t)
-            Nothing -> throwError $ undefinedSymbol (Text.pack $ show symbol)
+            Nothing -> throwError $ undefinedSymbol sp (Text.pack $ show symbol)
     Nothing -> undefined
-  where
-    undefinedSymbol n = TcError (Error sp $ Text.concat ["undefined symbol ", n])
+
+undefinedSymbol :: Show a => Span -> a -> TcError
+undefinedSymbol sp n = TcError (Error sp $ Text.concat ["undefined symbol ", Text.pack $ show n])
 
 synth ::
   Ast.Expr Unique Span ->
@@ -145,7 +149,7 @@ synth (Ast.Node expr sp) = case expr of
   Ast.Symbol alpha ->
     synthSymbol alpha >>= \case
       Just t -> return $ Ast.Node (Ast.Symbol alpha) (sp, t)
-      Nothing -> undefined -- Should be unreachable
+      Nothing -> throwError $ undefinedSymbol sp alpha
   Ast.Numeric num -> return $ Ast.Node (Ast.Numeric num) (sp, Type.int)
   Ast.String str -> return $ Ast.Node (Ast.String str) (sp, Type.string)
   Ast.Let p e1 e2 -> do
@@ -175,7 +179,7 @@ synth (Ast.Node expr sp) = case expr of
           Just namespaceUniq -> do
             (symbol, f) <- lookupName sp namespaceUniq rest
             let symbolNode = Ast.Node (Ast.Symbol symbol) (sp, f)
-            f' <- applyType sp f a't
+            f' <- applyDotType sp f a't
             return $ Ast.Node (Ast.Dot a' $ Ast.DotResolved symbolNode) (sp, f')
           Nothing -> throwError $ TcError (Error sp $ Text.pack ("cannot use dot notation on type " ++ show a't))
   Ast.Unit -> return $ Ast.Node Ast.Unit (sp, Type.unit)
@@ -207,7 +211,7 @@ synth (Ast.Node expr sp) = case expr of
     let t = case (extern, name) of
           (Ast.Extern, Unique.Builtin name') -> Type.Intrinsic name'
           _ -> Type.Base name
-    instantiate name t
+    instantiateType name t
     rest' <- synth rest
     return $ Ast.Node (Ast.Type extern name cident rest') (sp, t)
   Ast.Match scrutinee branches -> do
@@ -219,3 +223,16 @@ synth (Ast.Node expr sp) = case expr of
       e' <- check e alpha
       return (pat', e')
     return $ Ast.Node (Ast.Match scrutinee' branches') (sp, t)
+
+applyDotType :: Span -> Type -> Type -> TcCtxM Type
+applyDotType sp f b = case f of
+  Type.Arrow a@(Type.Tuple []) c -> do
+    subtype sp a b
+    return c
+  Type.Arrow (Type.Tuple (a:as)) c -> do
+    subtype sp a b
+    return $ Type.arrow as c
+  Type.Arrow a c -> do
+    subtype sp a b
+    return (Type.Arrow (Type.Tuple []) c)
+  _ -> throwError $ TcError (Error sp $ Text.pack ("cannot call type " ++ show f))

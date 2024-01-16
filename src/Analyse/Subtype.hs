@@ -26,6 +26,8 @@ subtype' a b = case (a, b) of
   (Type.Var (Type.Named alpha), Type.Var (Type.Named beta)) | alpha == beta -> return ()
   (Type.Base alpha, Type.Base beta) | alpha == beta -> return ()
   (Type.Tuple as, Type.Tuple bs) -> foldM_ (\() (a', b') -> subtype' a' b') () (zip as bs)
+  (Type.Borrow a', _) -> subtype' a' b
+  (_, Type.Borrow b') -> subtype' a b'
   (Type.Arrow a1 a2, Type.Arrow b1 b2) -> do
     subtype' b1 a1
     env <- getEnv
@@ -81,16 +83,3 @@ instantiateR a alphaE =
         solve alphaE (Type.Tuple $ map Type.Exist' alphas)
         mapM_ (uncurry instantiateR) (zip as alphas)
       _ -> undefined
-
-applyType :: Span -> Type -> Type -> TcCtxM Type
-applyType sp f b = case f of
-  Type.Arrow a@(Type.Tuple []) c -> do
-    subtype sp a b
-    return c
-  Type.Arrow (Type.Tuple (a:as)) c -> do
-    subtype sp a b
-    return $ Type.arrow as c
-  Type.Arrow a c -> do
-    subtype sp a b
-    return c
-  _ -> throwError $ TcError (Error sp $ Text.pack ("cannot call type " ++ show f))

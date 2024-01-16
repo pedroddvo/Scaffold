@@ -2,20 +2,24 @@ module Main (main, inferTest) where
 
 import Analyse.Desugar qualified as Desugar
 import Analyse.Infer qualified as Infer
+import Analyse.Perceus qualified as Perceus
 import Analyse.Resolver (resolveExpr)
 import Analyse.Resolver qualified as Resolver
 import Analyse.TcContext qualified as TcContext
 import Analyse.Unique (Unique)
+import Core qualified
 import Data.Map qualified as Map
+import Data.MultiSet qualified as MS
 import Data.Text (Text)
 import Data.Text.IO qualified as Text
-import Debug.Trace (traceShowM)
+import Debug.Trace (traceShow, traceShowId, traceShowM)
 import Emit.C qualified as Emit
 import Error (Error (..))
 import Span (Span)
 import Syntax.Ast qualified as Ast
 import Syntax.Parser qualified as Parser
 import Text.Megaparsec qualified as M
+import qualified Data.Set as S
 
 main :: IO ()
 main = inferTest "example.sfd"
@@ -43,7 +47,7 @@ inferTest file =
             Left err -> Left $ show err
             Right e' -> Right (e', env)
 
-    infer e env = case TcContext.runTc (Resolver.rs_module_names env) (synth e) of
+    infer e env = case TcContext.runTc (Resolver.rs_module_names env) (Resolver.rs_id_counter env) (synth e) of
       Left TcContext.SubtypeFailure -> undefined
       Left (TcContext.TcError err) -> Left $ show err
       Right t -> Right t
@@ -55,4 +59,15 @@ inferTest file =
 
     emit env uid e =
       let ds = Desugar.desugar uid e
-       in Emit.emit (Desugar.ds_core ds) (Desugar.ds_unique_gen ds) env
+          uid' = Desugar.ds_unique_gen ds
+          core = Desugar.ds_core ds
+          globalDefs =
+            S.unions
+              [ S.fromList . map fst $ Core.core_defs core,
+                S.fromList . map fst $ Core.core_extern_defs core
+              ]
+          (core', uid'') = Core.foldCore (Perceus.runPerceus globalDefs) uid' core
+       in Emit.emit
+            core'
+            uid''
+            env

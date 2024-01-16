@@ -18,6 +18,7 @@ data Type
   | Var Var
   | Arrow Type Type
   | Tuple [Type]
+  | Borrow Type
 
 instance Show Var where
   show (Exist alpha) = "^" ++ show alpha
@@ -30,6 +31,7 @@ instance Show Type where
     Arrow a@Arrow{} b -> "(" ++ show a ++ ") -> " ++ show b
     Arrow a b -> show a ++ " -> " ++ show b
     Tuple as -> "(" ++ intercalate ", " (map show as) ++ ")"
+    Borrow t -> "&" ++ show t
 
 pattern Exist' :: Unique -> Type
 pattern Exist' uniq = Var (Exist uniq)
@@ -43,6 +45,7 @@ freeVars = \case
   Var alpha -> Set.singleton alpha
   Arrow a b -> Set.union (freeVars a) (freeVars b)
   Tuple as -> Set.unions (map freeVars as)
+  Borrow t -> freeVars t
 
 isMonotype :: Type -> Bool
 isMonotype = \case
@@ -50,6 +53,7 @@ isMonotype = \case
   Var {} -> True
   Arrow a b -> isMonotype a && isMonotype b
   Tuple as -> all isMonotype as
+  Borrow t -> isMonotype t
 
 int :: Type
 int = Intrinsic (Name "Int")
@@ -66,6 +70,11 @@ tuple xs = Tuple xs
 
 arrow :: [Type] -> Type -> Type
 arrow args = Arrow (tuple args)
+
+unarrow :: Type -> [Type]
+unarrow (Arrow (Tuple xs) c) = xs ++ [c]
+unarrow (Arrow a c) = [a, c]
+unarrow _ = undefined
 
 name :: Type -> Maybe Unique
 name = \case
