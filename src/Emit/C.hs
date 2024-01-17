@@ -80,8 +80,7 @@ emit core uid vars = Builder.run (evalState builder emitState)
 
 emitTypeDef :: (Unique, Core.TypeDef) -> Builder
 emitTypeDef (name, def) =
-  let def' = case def of
-        Core.TypeDefExtern cident -> text cident
+  let def' = text (type_def_extern_name def)
    in "typedef " <> def' <> " " <> emitName name <> ";"
 
 emitExternDef :: (Unique, Core.ExternDef) -> EmitM Builder
@@ -204,7 +203,7 @@ emitExpr i' mapEnd expr = do
     emitApp :: Indent -> Core.Expr -> [Core.Arg] -> EmitM ([Builder], Builder)
     emitApp i f args = do
       (stmts, f') <- emitExpr' i f
-      emittedArgs <- mapM (\(Core.Arg e _) -> emitExpr' 0 e) args
+      emittedArgs <- mapM (\(Core.Arg _ e _) -> emitExpr' 0 e) args
       let (stmts', args') = foldl' (\(ss, sa) (s, a) -> (ss ++ s, sa ++ [a])) (stmts, []) emittedArgs
       return (stmts', f' <> "(" <> intercalate ", " args' <> ")")
 

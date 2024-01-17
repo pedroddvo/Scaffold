@@ -1,6 +1,7 @@
 module Core where
 
 import Analyse.Type (Type)
+import Analyse.Type qualified as Type
 import Analyse.Unique (Unique)
 import Data.Bifunctor qualified
 import Data.List (foldl', intercalate)
@@ -10,6 +11,7 @@ import Data.MultiSet (MultiSet)
 import Data.MultiSet qualified as S
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Syntax.Name
 
 data Expr
   = Var Unique
@@ -21,7 +23,7 @@ data Expr
   | Drop Unique Expr
   | Case Expr Type [Alt] Type
 
-data Arg = Arg Expr PassKind
+data Arg = Arg Type Expr PassKind
 
 data PassKind = PassOwned | PassBorrow
 
@@ -52,7 +54,10 @@ data Def = Def
     def_args :: [(AltCon, Type)]
   }
 
-newtype TypeDef = TypeDefExtern Text
+data TypeDef = TypeDefExtern
+  { type_def_extern_name :: Text,
+    type_def_extern_type :: Type
+  }
 
 instance Show Literal where
   show (LitNumeric n) = Text.unpack n
@@ -67,8 +72,8 @@ instance Show Alt where
   show (Alt con _ e) = show con ++ " => " ++ show e
 
 instance Show Arg where
-  show (Arg e PassOwned) = show e
-  show (Arg e PassBorrow) = "&" ++ show e
+  show (Arg _ e PassOwned) = show e
+  show (Arg _ e PassBorrow) = "&" ++ show e
 
 instance Show Expr where
   show = \case
@@ -92,21 +97,22 @@ foldCore f a core = (core', a1)
           core_extern_defs = core_extern_defs core
         }
 
-freeVars :: Expr -> MultiSet Unique
-freeVars = \case
-  Var x -> S.singleton x
-  Lit _ -> S.empty
-  App _ e1 e2 -> foldl' S.maxUnion (freeVars e1) (map fvArg e2)
-  Lam x e -> S.delete x (freeVars e)
-  Let x _ e1 e2 -> S.delete x $ S.maxUnion (freeVars e1) (freeVars e2)
-  Dup _ e -> freeVars e
-  Drop _ e -> freeVars e
-  Case e _ alts _ -> foldl' fvAlt (freeVars e) alts
-  where
-    fvArg (Arg e PassOwned) = freeVars e
-    fvArg (Arg (Var x) PassBorrow) = S.empty
-    fvAlt e' (Alt con _ e) = S.maxUnion e' (fvAltCon (freeVars e) con)
-
-    fvAltCon e (AltLiteral _) = e
-    fvAltCon e (AltBind x) = S.delete x e
-    fvAltCon e AltWildcard = e
+--
+-- freeVars :: Expr -> MultiSet Unique
+-- freeVars = \case
+--   Var x -> S.singleton x
+--   Lit _ -> S.empty
+--   App _ e1 e2 -> foldl' S.maxUnion (freeVars e1) (map fvArg e2)
+--   Lam x e -> S.delete x (freeVars e)
+--   Let x _ e1 e2 -> S.delete x $ S.maxUnion (freeVars e1) (freeVars e2)
+--   Dup _ e -> freeVars e
+--   Drop _ e -> freeVars e
+--   Case e _ alts _ -> foldl' fvAlt (freeVars e) alts
+--   where
+--     fvArg (Arg e PassOwned) = freeVars e
+--     fvArg (Arg (Var x) PassBorrow) = S.empty
+--     fvAlt e' (Alt con _ e) = S.maxUnion e' (fvAltCon (freeVars e) con)
+--
+--     fvAltCon e (AltLiteral _) = e
+--     fvAltCon e (AltBind x) = S.delete x e
+--     fvAltCon e AltWildcard = e

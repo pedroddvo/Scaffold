@@ -98,12 +98,8 @@ desugarArg :: Typed a => Ast.Expr Unique a -> Type -> DesugarM ([Core.Expr -> Co
 desugarArg e@(Ast.Node kind _) t = do
   e' <- desugarExpr e
   case (kind, t) of
-    (Ast.Symbol _, Type.Borrow _) -> do
-      return ([], Core.Arg e' Core.PassBorrow)
-    (_, Type.Borrow _) -> do
-      p <- fresh
-      return ([Core.Let p t e'], Core.Arg (Core.Var p) Core.PassBorrow)
-    _ -> return ([], Core.Arg e' Core.PassOwned)
+    (_, Type.Borrow t') -> return ([], Core.Arg t' e' Core.PassBorrow)
+    (_, t') -> return ([], Core.Arg t' e' Core.PassOwned)
 
 desugarBranch :: Typed a => Ast.MatchBranch Unique a -> DesugarM Core.Alt
 desugarBranch (pat, e) = do
@@ -112,7 +108,7 @@ desugarBranch (pat, e) = do
   return $ Core.Alt pat' t e'
 
 desugarProgram :: Typed a => Ast.Expr Unique a -> DesugarM ()
-desugarProgram (Ast.Node kind _) = case kind of
+desugarProgram node@(Ast.Node kind _) = case kind of
   Ast.Def name args _ e rest -> do
     e' <- desugarExpr e
     args' <- mapM desugarPattern args
@@ -137,7 +133,7 @@ desugarProgram (Ast.Node kind _) = case kind of
       )
     desugarProgram rest
   Ast.Type Ast.Extern name cident rest -> do
-    newTypeDef name (Core.TypeDefExtern cident)
+    newTypeDef name (Core.TypeDefExtern cident (nodeType node))
     desugarProgram rest
   Ast.Unit -> return ()
   _ -> undefined

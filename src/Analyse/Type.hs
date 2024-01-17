@@ -80,3 +80,8 @@ name :: Type -> Maybe Unique
 name = \case
   Base uniq -> Just uniq
   _ -> Nothing
+
+isIntrinsic :: Type -> Bool
+isIntrinsic = \case
+  Intrinsic _ -> True
+  _ -> False

@@ -6,10 +6,12 @@ import Analyse.Perceus qualified as Perceus
 import Analyse.Resolver (resolveExpr)
 import Analyse.Resolver qualified as Resolver
 import Analyse.TcContext qualified as TcContext
+import Analyse.Type qualified as Type
 import Analyse.Unique (Unique)
 import Core qualified
 import Data.Map qualified as Map
 import Data.MultiSet qualified as MS
+import Data.Set qualified as S
 import Data.Text (Text)
 import Data.Text.IO qualified as Text
 import Debug.Trace (traceShow, traceShowId, traceShowM)
@@ -19,7 +21,6 @@ import Span (Span)
 import Syntax.Ast qualified as Ast
 import Syntax.Parser qualified as Parser
 import Text.Megaparsec qualified as M
-import qualified Data.Set as S
 
 main :: IO ()
 main = inferTest "example.sfd"
@@ -66,7 +67,12 @@ inferTest file =
               [ S.fromList . map fst $ Core.core_defs core,
                 S.fromList . map fst $ Core.core_extern_defs core
               ]
-          (core', uid'') = Core.foldCore (Perceus.runPerceus globalDefs) uid' core
+          nonRcTypes =
+            S.fromList
+              . map fst
+              . filter (not . Type.isIntrinsic . Core.type_def_extern_type . snd)
+              $ Core.core_type_defs core
+          (core', uid'') = Core.foldCore (Perceus.runPerceus nonRcTypes globalDefs) uid' core
        in Emit.emit
             core'
             uid''
