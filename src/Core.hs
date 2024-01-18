@@ -27,7 +27,9 @@ data Arg = Arg Type Expr PassKind
 
 data PassKind = PassOwned | PassBorrow
 
-data Alt = Alt AltCon Type Expr
+type Guards = [Expr]
+
+data Alt = Alt AltCon Guards Type Expr
 
 data AltCon
   = AltLiteral Literal
@@ -69,7 +71,8 @@ instance Show AltCon where
   show AltWildcard = "_"
 
 instance Show Alt where
-  show (Alt con _ e) = show con ++ " => " ++ show e
+  show (Alt con guards _ e) =
+    show con ++ intercalate ", " (map (("if " ++) . show) guards) ++ " => " ++ show e
 
 instance Show Arg where
   show (Arg _ e PassOwned) = show e

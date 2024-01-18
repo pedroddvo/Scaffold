@@ -58,6 +58,9 @@ isMonotype = \case
 int :: Type
 int = Intrinsic (Name "Int")
 
+bool :: Type
+bool = Intrinsic (Name "Bool")
+
 string :: Type
 string = Intrinsic (Name "String")
 

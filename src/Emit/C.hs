@@ -8,7 +8,7 @@ import Analyse.Type qualified as Type
 import Analyse.Unique (Unique)
 import Analyse.Unique qualified as Unique
 import Control.Monad.State (State, evalState, gets, modify)
-import Core (Alt (Alt), AltCon (..), Arg (..), Core (..), Def (..), Expr (..), ExternDef (extern_def_args, extern_def_name, extern_def_return_type), Literal (..), TypeDef (..))
+import Core (Alt (Alt), AltCon (..), Arg (..), Core (..), Def (..), Expr (..), ExternDef (extern_def_args, extern_def_name, extern_def_return_type), Guards, Literal (..), TypeDef (..))
 import Data.Bifunctor qualified
 import Data.Foldable (Foldable (foldl', foldr'))
 import Data.Map (Map)
@@ -18,7 +18,7 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Debug.Trace (traceShowM, traceShowId)
+import Debug.Trace (traceShowId, traceShowM, traceShow)
 import GHC.List qualified as List
 import Syntax.Name (Name)
 import Syntax.Name qualified as Name
@@ -74,7 +74,7 @@ emit core uid vars = Builder.run (evalState builder emitState)
 
     externVars = map (Data.Bifunctor.second extern_def_name) $ Core.core_extern_defs core
 
-    emitDefs = intercalate "\n\n" <$> mapM emitDef (reverse $ Core.core_defs core)
+    emitDefs = intercalate "\n\n" <$> mapM emitDef (Core.core_defs core)
     emitExternDefs = intercalate "\n\n" <$> mapM emitExternDef (reverse $ Core.core_extern_defs core)
     emitTypeDefs = intercalate "\n" $ map emitTypeDef (reverse $ Core.core_type_defs core)
 
@@ -127,14 +127,17 @@ type Indent = Int
 indent :: Indent -> Builder
 indent i = text $ Text.replicate (i * 4) " "
 
-emitExpr :: Indent -> (Builder -> Builder) -> Core.Expr -> EmitM Builder
-emitExpr i' mapEnd expr = do
-  (stmts, expr') <- emitExpr' i' expr
+emitStmts :: Indent -> [Builder] -> Builder
+emitStmts i stmts = do
   let endStmts = case stmts of
         [] -> text ""
         _ -> text ";\n"
-  return $
-    intercalate ";\n" (map (indent i' <>) stmts) <> endStmts <> indent i' <> mapEnd expr'
+   in intercalate ";\n" (map (indent i <>) stmts) <> endStmts <> indent i
+
+emitExpr :: Indent -> (Builder -> Builder) -> Core.Expr -> EmitM Builder
+emitExpr i' mapEnd expr = do
+  (stmts, expr') <- emitExpr' i' expr
+  return $ emitStmts i' stmts <> mapEnd expr'
   where
     emitExpr' :: Indent -> Core.Expr -> EmitM ([Builder], Builder)
     emitExpr' i = \case
@@ -165,10 +168,13 @@ emitExpr i' mapEnd expr = do
 
     emitCaseAlts :: Indent -> Builder -> Builder -> [Core.Alt] -> EmitM Builder
     emitCaseAlts i res scrut [] = return ""
-    emitCaseAlts i res scrut ((Core.Alt con t e) : rest) = do
-      e' <- emitExpr (i + 1) (\e' -> res <> " = " <> e' <> ";\n") e
-      case con of
-        Core.AltLiteral lit -> do
+    emitCaseAlts i res scrut ((Core.Alt con guards t e) : rest) = do
+      let offs = if List.null guards then 1 else 2
+      e' <-
+        emitExpr (i + offs) (\e' -> res <> " = " <> e' <> ";\n") e
+          >>= emitGuards (i + 1) guards
+      case (con, guards) of
+        (Core.AltLiteral lit, _) -> do
           rest' <- emitCaseAlts i res scrut rest
           return $
             "if ("
@@ -181,18 +187,45 @@ emitExpr i' mapEnd expr = do
               <> "}"
               <> (if List.null rest then "" else " else ")
               <> rest'
-        Core.AltBind x -> do
+        (Core.AltBind x, []) -> do
           return $
             "{\n"
               <> indent (i + 1)
               <> emitType t
-              <> " = "
+              <> " "
               <> emitName x
+              <> " = "
+              <> scrut
               <> ";\n"
               <> e'
               <> indent i
               <> "}"
-        Core.AltWildcard -> return $ "{\n" <> e' <> indent i <> "}"
+        (Core.AltBind x, _xs) -> do
+          rest' <- emitCaseAlts (i + 1) res scrut rest
+          return $
+            "{\n"
+              <> indent (i + 1)
+              <> emitType t
+              <> " "
+              <> emitName x
+              <> " = "
+              <> scrut
+              <> ";\n"
+              <> e'
+              <> (if List.null rest then "" else " else ")
+              <> rest'
+              <> "\n"
+              <> indent i
+              <> "}"
+        (Core.AltWildcard, _) -> return $ "{\n" <> e' <> indent i <> "}"
+
+    emitGuards :: Indent -> Core.Guards -> Builder -> EmitM Builder
+    emitGuards _ [] e = return e
+    emitGuards i [guard] e = do
+      (stmts, guard') <- emitExpr' i guard
+      let stmts' = emitStmts i stmts
+      return $ stmts' <> "if (" <> guard' <> ") {\n" <> e <> indent i <> "}"
+    emitGuards _ _ _ = undefined
 
     emitVar :: Unique -> EmitM ([Builder], Builder)
     emitVar name =
@@ -223,7 +256,7 @@ emitType :: Type -> Builder
 emitType = \case
   Type.Base name -> emitName name
   Type.Borrow e -> emitType e
-  _ -> undefined
+  t -> traceShow t undefined
 
 emitName :: Unique -> Builder
 emitName = \case

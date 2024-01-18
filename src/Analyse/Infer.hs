@@ -93,6 +93,8 @@ synthApp sp t args = case (t, args) of
   (Type.Arrow a c, [arg]) -> do
     arg' <- check arg a
     return (c, [arg'])
+  (Type.Arrow (Type.Tuple as) _, _) | length args /= length as ->
+    throwError $ TcError (Error sp "function called with wrong number of arguments")
   (Type.Arrow (Type.Tuple as) c, _) -> do
     args' <- zipWithM check args as
     return (c, args')
@@ -218,11 +220,13 @@ synth (Ast.Node expr sp) = case expr of
     scrutinee' <- synth scrutinee
     let t = nodeType scrutinee'
     alpha <- Type.Exist' <$> fresh
-    branches' <- forM branches $ \(pat, e) -> do
+    branches' <- forM branches $ \(pat, guards, e) -> do
       pat' <- instantiatePattern pat t
+      guards' <- mapM (`check` Type.bool) guards
       e' <- check e alpha
-      return (pat', e')
-    return $ Ast.Node (Ast.Match scrutinee' branches') (sp, t)
+      return (pat', guards', e')
+    env <- getEnv
+    return $ Ast.Node (Ast.Match scrutinee' branches') (sp, apply env alpha)
 
 applyDotType :: Span -> Type -> Type -> TcCtxM Type
 applyDotType sp f b = case f of

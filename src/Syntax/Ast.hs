@@ -49,7 +49,7 @@ data ExprNode v a
   | Unit
   deriving (Show, Functor, Foldable, Traversable)
 
-type MatchBranch v a = (Pattern v a, Expr v a)
+type MatchBranch v a = (Pattern v a, [Expr v a], Expr v a)
 
 type Expr v = Node (ExprNode v)
 

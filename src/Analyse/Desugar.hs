@@ -102,10 +102,11 @@ desugarArg e@(Ast.Node kind _) t = do
     (_, t') -> return ([], Core.Arg t' e' Core.PassOwned)
 
 desugarBranch :: Typed a => Ast.MatchBranch Unique a -> DesugarM Core.Alt
-desugarBranch (pat, e) = do
+desugarBranch (pat, guards, e) = do
   (pat', t) <- desugarPattern pat
+  guards' <- mapM desugarExpr guards
   e' <- desugarExpr e
-  return $ Core.Alt pat' t e'
+  return $ Core.Alt pat' guards' t e'
 
 desugarProgram :: Typed a => Ast.Expr Unique a -> DesugarM ()
 desugarProgram node@(Ast.Node kind _) = case kind of

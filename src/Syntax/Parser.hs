@@ -13,6 +13,8 @@ import Syntax.Name qualified as Name
 import Text.Megaparsec qualified as M
 import Text.Megaparsec.Char qualified as M
 import Text.Megaparsec.Char.Lexer qualified as L
+import qualified Data.List as List
+import Data.Maybe (maybeToList)
 
 type Parser = M.Parsec Void Text
 
@@ -63,7 +65,7 @@ nameP = Name.fromList <$> M.sepBy1 symbolP "."
 --     <*> M.takeWhile1P (Just "C identifier") (\c -> isAlphaNum c || c == '_')
 
 stringLit :: Parser Text
-stringLit = M.between (symbol "\"") (symbol "\"") $ M.takeWhile1P (Just "C identifier") (/= '"')
+stringLit = M.between (symbol "\"") (symbol "\"") $ M.takeWhileP (Just "string") (/= '"')
 
 pfoldr :: Parser a -> Parser b -> (a -> c) -> (a -> b -> c) -> Parser c
 pfoldr pa pb fa fab = pa >>= \a -> (fab a <$> pb) <|> return (fa a)
@@ -145,8 +147,11 @@ exprDot = Ast.node_kind <$> leftRec (node $ lexeme exprBase) (pdot <|> papp)
 -- exprApp :: Parser (TNode Ast.ExprNode)
 -- exprApp = Ast.node_kind <$> pfoldl1 (node $ lexeme exprBase) (\a b -> Ast.Node (Ast.App a b) (Ast.node_data a <> Ast.node_data b))
 
-matchBranch :: Parser (Node Ast.PatternNode, Node Ast.ExprNode)
-matchBranch = (,) <$> patternP <*> (symbol "=>" >> exprP)
+matchBranch :: Parser (Node Ast.PatternNode, [Node Ast.ExprNode], Node Ast.ExprNode)
+matchBranch = (,,) <$> patternP <*> (maybeToList <$> M.optional branchGuard) <*> (symbol "=>" >> exprP)
+
+branchGuard :: Parser (Node Ast.ExprNode)
+branchGuard = symbol "if" >> exprP
 
 exprNode :: Parser (TNode Ast.ExprNode)
 exprNode =

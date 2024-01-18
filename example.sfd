@@ -2,19 +2,33 @@ extern type Int = "int"
 extern type USize = "size_t"
 extern type String = "sfd_object*"
 extern type Handle = "FILE*"
+extern type Bool = "bool"
 
 extern def Int.toUSize(a : Int) : USize = "sfd_int_to_usize"
 
 extern def String.alloc(size cap : USize) : String = "sfd_alloc_string"
 extern def String.append(a : String, b : &String) : String = "sfd_string_append"
+extern def String.len(a : &String) : Int = "sfd_string_len"
 
 extern def IO.getStdout() : Handle = "sfd_io_get_stdout"
 extern def Handle.putStr(handle : Handle, string : &String) : Int = "sfd_io_put_str"
 
+extern def Int.add(a b : Int) : Int = "sfd_int_add"
+extern def Int.mul(a b : Int) : Int = "sfd_int_mul"
+extern def Int.equal(a b : Int) : Bool = "sfd_int_eql"
+
+def String.duplicateAux(r a : String, n i : Int) =
+  match i {
+    x if x.equal(n) => r,
+    _ => r.append(a).duplicateAux(a, n, i.add(1))
+  }
+
+def String.duplicate(a : String, n : Int) =
+  let alloc = String.alloc(0.toUSize(), a.len().mul(n).toUSize());
+  String.duplicateAux(alloc, a, n, 0)
+
 def main() : Int =
-  let a = "hello";
-  let c = a.append(a);
+  let x = "*".duplicate(5);
   let stdout = IO.getStdout();
-  let _ = stdout.putStr(c);
-  let _ = stdout.putStr("test");
+  let _ = stdout.putStr(x);
   0

@@ -15,6 +15,7 @@ import Syntax.Ast (node, node2, node3)
 import Syntax.Ast qualified as Ast
 import Syntax.Name (Name (..))
 import Syntax.Name qualified as Name
+import Debug.Trace (traceShowM)
 
 type ResolvedMap = Map (Name Text) Unique
 
@@ -108,7 +109,7 @@ resolveExpr env expr =
               else instantiate env name
           (env'', args') <- foldM (\(env'', pats) pat -> fmap (: pats) <$> instantiatePattern env'' pat) (env', []) args
           e' <- resolveExpr env'' e
-          rest' <- resolveExpr env'' rest
+          rest' <- resolveExpr env' rest
           return $ Ast.Node (Ast.Def name' (reverse args') ret' e' rest') sp
         Ast.ExternDef name args ret cident rest -> do
           ret' <- resolveType env ret
@@ -131,16 +132,17 @@ resolveMatchBranch ::
   ResolvedMap ->
   Ast.MatchBranch (Name Text) Span ->
   ResolverM (Ast.MatchBranch Unique Span)
-resolveMatchBranch env (pat, e) = do
+resolveMatchBranch env (pat, guards, e) = do
   (env', pat') <- instantiatePattern env pat
+  guards' <- mapM (resolveExpr env') guards
   e' <- resolveExpr env' e
-  return (pat', e')
+  return (pat', guards', e')
 
 intrinsicDefNames :: [Text]
 intrinsicDefNames = ["main"]
 
 intrinsicTypes :: [Text]
-intrinsicTypes = ["Int", "String"]
+intrinsicTypes = ["Int", "String", "Bool"]
 
 runResolver :: ResolverM a -> (Either Error a, ResolverState)
 runResolver =

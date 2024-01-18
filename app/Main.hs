@@ -72,7 +72,7 @@ inferTest file =
               . map fst
               . filter (not . Type.isIntrinsic . Core.type_def_extern_type . snd)
               $ Core.core_type_defs core
-          (core', uid'') = Core.foldCore (Perceus.runPerceus nonRcTypes globalDefs) uid' core
+          (core', uid'') = Perceus.runPerceus nonRcTypes globalDefs uid' core
        in Emit.emit
             core'
             uid''
