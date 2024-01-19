@@ -17,18 +17,11 @@ extern def Int.add(a b : Int) : Int = "sfd_int_add"
 extern def Int.mul(a b : Int) : Int = "sfd_int_mul"
 extern def Int.equal(a b : Int) : Bool = "sfd_int_eql"
 
-def String.duplicateAux(r a : String, n i : Int) =
-  match i {
-    x if x.equal(n) => r,
-    _ => r.append(a).duplicateAux(a, n, i.add(1))
-  }
-
-def String.duplicate(a : String, n : Int) =
-  let alloc = String.alloc(0.toUSize(), a.len().mul(n).toUSize());
-  String.duplicateAux(alloc, a, n, 0)
+type Option {
+  some(a b c d e f : String),
+  none
+}
 
 def main() : Int =
-  let x = "*".duplicate(5);
-  let stdout = IO.getStdout();
-  let _ = stdout.putStr(x);
+  let x = Option.some("a", "a", "a", "a", "a", "a");
   0

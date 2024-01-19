@@ -41,7 +41,16 @@ data Literal = LitNumeric Text | LitString Text
 data Core = Core
   { core_defs :: [(Unique, Def)],
     core_extern_defs :: [(Unique, ExternDef)],
-    core_type_defs :: [(Unique, TypeDef)]
+    core_type_defs :: [(Unique, TypeDef)],
+    core_inductive_types :: [(Unique, InductiveType)]
+  }
+
+newtype InductiveType = InductiveType
+  { inductive_type_ctors :: [(Unique, InductiveTypeCtor)]
+  }
+
+newtype InductiveTypeCtor = InductiveTypeCtor
+  { inductive_type_ctor_args :: [(Unique, Type)]
   }
 
 data ExternDef = ExternDef
@@ -93,12 +102,7 @@ foldCore :: (a -> Expr -> (Expr, a)) -> a -> Core -> (Core, a)
 foldCore f a core = (core', a1)
   where
     (a1, foldDefs) = foldl' (\(_, es) (u, e) -> let (e', a') = f a (def_expr e) in (a', (u, e {def_expr = e'}) : es)) (a, []) (core_defs core)
-    core' =
-      Core
-        { core_defs = foldDefs,
-          core_type_defs = core_type_defs core,
-          core_extern_defs = core_extern_defs core
-        }
+    core' = core {core_defs = foldDefs}
 
 --
 -- freeVars :: Expr -> MultiSet Unique

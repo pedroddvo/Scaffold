@@ -1,9 +1,12 @@
+{-# LANGUAGE TupleSections #-}
 module Syntax.Parser where
 
 import Control.Applicative (Alternative (..))
 import Data.Char (isAlpha, isAlphaNum, isDigit)
 import Data.Foldable (foldr')
 import Data.List (foldl1')
+import Data.List qualified as List
+import Data.Maybe (maybeToList)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Void (Void)
@@ -13,8 +16,6 @@ import Syntax.Name qualified as Name
 import Text.Megaparsec qualified as M
 import Text.Megaparsec.Char qualified as M
 import Text.Megaparsec.Char.Lexer qualified as L
-import qualified Data.List as List
-import Data.Maybe (maybeToList)
 
 type Parser = M.Parsec Void Text
 
@@ -97,7 +98,7 @@ typeP = node typeNode
 patternBase :: Parser (TNode Ast.PatternNode)
 patternBase =
   paren patternNode
-    <|> (Ast.PSymbol . Name.Name <$> symbolP)
+    <|> (Ast.PSymbol <$> nameP)
     <|> (Ast.PNumeric <$> M.takeWhile1P (Just "number") isDigit)
     <|> (Ast.PWildcard <$ symbol "_")
 
@@ -166,33 +167,53 @@ exprP = node exprNode
 type Stmt = Node Ast.ExprNode -> (Span, TNode Ast.ExprNode)
 
 stmt :: Parser Stmt
-stmt = externStmt <|> stmtDef <|> stmtType Ast.NonExtern
+stmt = externStmt <|> stmtDef <|> stmtInductiveType
 
 externStmt :: Parser Stmt
-externStmt = symbol "extern" >> (externStmtDef <|> stmtType Ast.Extern)
+externStmt = symbol "extern" >> (externStmtDef <|> stmtExternType)
 
 externStmtDef :: Parser Stmt
 externStmtDef = do
   start <- M.getOffset
   name <- symbol "def" >> lexeme nameP
-  args <- defArgs
+  args <- argsP defArg
   ret <- symbol ":" >> typeP
   cident <- symbol "=" >> stringLit
   end <- M.getOffset
   return $ \rest -> (Span start end, Ast.ExternDef name args ret cident rest)
 
+stmtInductiveType :: Parser Stmt
+stmtInductiveType = do
+  start <- M.getOffset
+  name <- symbol "type" >> lexeme nameP
+  ctors <- curly $ M.sepBy1 inductiveTypeConstructor (symbol ",")
+  end <- M.getOffset
+  return $ \rest -> (Span start end, Ast.InductiveType name ctors rest)
+
+inductiveTypeConstructor :: Parser (TNode Ast.Ctor)
+inductiveTypeConstructor = do
+  name <- lexeme nameP
+  args <- M.option [] $ argsP inductiveCtorArg
+  return $ Ast.Ctor name args
+
 stmtDef :: Parser Stmt
 stmtDef = do
   start <- M.getOffset
   name <- symbol "def" >> lexeme nameP
-  args <- defArgs
+  args <- argsP defArg
   ret <- M.optional (symbol ":" >> typeP)
   e <- symbol "=" >> exprP
   end <- M.getOffset
   return $ \rest -> (Span start end, Ast.Def name args ret e rest)
 
-defArgs :: Parser [Node Ast.PatternNode]
-defArgs = concat <$> paren (M.sepBy defArg (symbol ","))
+argsP :: Parser [a] -> Parser [a]
+argsP p = concat <$> paren (M.sepBy p (symbol ","))
+
+inductiveCtorArg :: Parser [(Name, Node Ast.TypeNode)]
+inductiveCtorArg =
+  (\pats t -> map (,t) pats)
+    <$> some (lexeme nameP)
+    <*> (symbol ":" >> typeP)
 
 defArg :: Parser [Node Ast.PatternNode]
 defArg =
@@ -200,13 +221,13 @@ defArg =
     <$> some (node $ lexeme patternBase)
     <*> (symbol ":" >> typeP)
 
-stmtType :: Ast.Extern -> Parser Stmt
-stmtType extern = do
+stmtExternType :: Parser Stmt
+stmtExternType = do
   start <- M.getOffset
   name <- symbol "type" >> lexeme nameP
   cident <- symbol "=" >> stringLit
   end <- M.getOffset
-  return $ \rest -> (Span start end, Ast.Type extern name cident rest)
+  return $ \rest -> (Span start end, Ast.ExternType name cident rest)
 
 program :: Parser (Node Ast.ExprNode)
 program = do

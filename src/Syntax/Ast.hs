@@ -31,9 +31,6 @@ data PatternNode v a
 
 type Pattern v = Node (PatternNode v)
 
-data Extern = Extern | NonExtern
-  deriving (Show)
-
 data ExprNode v a
   = Symbol v
   | Numeric Text
@@ -43,10 +40,14 @@ data ExprNode v a
   | App (Expr v a) [Expr v a]
   | Def v [Pattern v a] (Maybe (Type v a)) (Expr v a) (Expr v a)
   | ExternDef v [Pattern v a] (Type v a) Text (Expr v a)
-  | Type Extern v Text (Expr v a)
+  | InductiveType v [Ctor v a] (Expr v a)
+  | ExternType v Text (Expr v a)
   | Dot (Expr v a) (DotResolved v a)
   | Match (Expr v a) [MatchBranch v a]
   | Unit
+  deriving (Show, Functor, Foldable, Traversable)
+
+data Ctor v a = Ctor v [(v, Type v a)]
   deriving (Show, Functor, Foldable, Traversable)
 
 type MatchBranch v a = (Pattern v a, [Expr v a], Expr v a)

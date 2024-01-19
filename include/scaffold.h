@@ -7,6 +7,7 @@
 typedef struct {
     int rc;
     unsigned tag:8;
+    unsigned fields:8;
 } sfd_object;
 
 typedef struct {
@@ -17,19 +18,54 @@ typedef struct {
 
 typedef enum {
     ScaffoldString,
+    ScaffoldCtor,
 } sfd_object_tag;
+
+typedef sfd_object sfd_ctor;
+typedef sfd_object* sfd_boxed;
 
 #define sfd_string(obj) ((sfd_string*)obj)
 
-static inline void sfd_set_header(sfd_object* o, unsigned tag) {
+static inline void sfd_free_object(sfd_object* o);
+
+static inline sfd_object* sfd_box(size_t n) { return (sfd_object*)(((size_t)(n) << 1) | 1); }
+static inline size_t sfd_unbox(sfd_object* o) { return (size_t)(o) >> 1; }
+static inline bool sfd_is_boxed(sfd_object* o) { return ((size_t)(o) & 1) == 1; }
+
+static inline void sfd_set_header(sfd_object* o, unsigned tag, unsigned fields) {
     o->rc = 1;
     o->tag = tag;
+    o->fields = fields;
+}
+
+static inline sfd_ctor* sfd_ctor_alloc(size_t fields) {
+    sfd_ctor* ctor = (sfd_ctor*)malloc(sizeof(sfd_ctor) + sizeof(sfd_object*)*fields);
+    sfd_set_header((sfd_object*)ctor, ScaffoldCtor, fields);
+    return ctor;
+}
+
+typedef struct {
+    sfd_object* header;
+    sfd_boxed fields[1];
+} sfd_ctor_fields;
+
+static inline void sfd_ctor_set(sfd_ctor* ctor, unsigned i, sfd_boxed obj) {
+    sfd_ctor_fields* ctorf = (sfd_ctor_fields*)ctor;
+    ctorf->fields[i] = obj;
+}
+
+static inline void sfd_ctor_free(sfd_ctor* ctor) {
+    sfd_ctor_fields* ctorf = (sfd_ctor_fields*)ctor;
+    for (size_t i = 0; i < ctor->fields; i++) {
+        if (sfd_is_boxed(ctorf->fields[i])) continue;
+        sfd_free_object(ctorf->fields[i]);
+    }
 }
 
 static inline void sfd_free_object(sfd_object* o) {
-    printf("freed object\n");
     switch (o->tag) {
         case ScaffoldString: free(o); break;
+        case ScaffoldCtor: sfd_ctor_free(o); break;
         default: assert(0 && "cannot free object of this type"); break;
     }
 }
@@ -62,9 +98,8 @@ static inline size_t _sfd_next_pow2(size_t n) {
 }
 
 static inline sfd_object* sfd_alloc_string(size_t size, size_t capacity) {
-    printf("alloced object\n");
     sfd_string* o = (sfd_string*)malloc(sizeof(sfd_string) + capacity);
-    sfd_set_header((sfd_object*)o, ScaffoldString);
+    sfd_set_header((sfd_object*)o, ScaffoldString, 0);
     o->size = size;
     o->capacity = capacity;
     return (sfd_object*)o;

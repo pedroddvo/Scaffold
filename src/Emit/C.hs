@@ -7,8 +7,9 @@ import Analyse.Type (Type)
 import Analyse.Type qualified as Type
 import Analyse.Unique (Unique)
 import Analyse.Unique qualified as Unique
+import Control.Monad (zipWithM)
 import Control.Monad.State (State, evalState, gets, modify)
-import Core (Alt (Alt), AltCon (..), Arg (..), Core (..), Def (..), Expr (..), ExternDef (extern_def_args, extern_def_name, extern_def_return_type), Guards, Literal (..), TypeDef (..))
+import Core (Alt (Alt), AltCon (..), Arg (..), Core (..), Def (..), Expr (..), ExternDef (extern_def_args, extern_def_name, extern_def_return_type), Guards, InductiveType (..), InductiveTypeCtor (inductive_type_ctor_args), Literal (..), TypeDef (..))
 import Data.Bifunctor qualified
 import Data.Foldable (Foldable (foldl', foldr'))
 import Data.Map (Map)
@@ -18,9 +19,9 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Debug.Trace (traceShowId, traceShowM, traceShow)
+import Debug.Trace (traceShow, traceShowId, traceShowM)
 import GHC.List qualified as List
-import Syntax.Name (Name)
+import Syntax.Name (Name (..))
 import Syntax.Name qualified as Name
 import Text.Builder
 import Text.Builder qualified as Builder
@@ -53,12 +54,15 @@ emit core uid vars = Builder.run (evalState builder emitState)
       let typeDefs = emitTypeDefs
       externDefs <- emitExternDefs
       defs <- emitDefs
+      inductiveTypes <- emitInductiveTypes
       return $
         header
           <> "\n\n"
           <> typeDefs
           <> "\n\n"
           <> externDefs
+          <> "\n\n"
+          <> inductiveTypes
           <> "\n\n"
           <> defs
 
@@ -76,6 +80,7 @@ emit core uid vars = Builder.run (evalState builder emitState)
 
     emitDefs = intercalate "\n\n" <$> mapM emitDef (Core.core_defs core)
     emitExternDefs = intercalate "\n\n" <$> mapM emitExternDef (reverse $ Core.core_extern_defs core)
+    emitInductiveTypes = intercalate "\n\n" <$> mapM emitInductiveType (Core.core_inductive_types core)
     emitTypeDefs = intercalate "\n" $ map emitTypeDef (reverse $ Core.core_type_defs core)
 
 emitTypeDef :: (Unique, Core.TypeDef) -> Builder
@@ -95,6 +100,65 @@ emitExternDef (_, def) = do
              <> intercalate ", " (map snd defArgs)
              <> ");"
          )
+
+emitInductiveType :: (Unique, Core.InductiveType) -> EmitM Builder
+emitInductiveType (name, ty) = do
+  let ctors = Core.inductive_type_ctors ty
+  ctors' <- intercalate "\n\n" <$> mapM (emitInductiveTypeCtor name) ctors
+  return $
+    "typedef sfd_object* "
+      <> emitName name
+      <> ";\n"
+      <> ctors'
+
+emitInductiveTypeCtor :: Unique -> (Unique, Core.InductiveTypeCtor) -> EmitM Builder
+emitInductiveTypeCtor indName (name, ctor) = do
+  let args = Core.inductive_type_ctor_args ctor
+  let argsMembers = map (\(arg, t) -> emitType t <> " " <> emitName arg) args
+  fns <- emitInductiveTypeCtorFn indName name args
+  return $
+    "typedef struct {\n"
+      <> emitStmts 1 argsMembers
+      <> "} "
+      <> emitName name
+      <> "_t"
+      <> ";\n\n"
+      <> fns
+
+emitInductiveTypeCtorFn :: Unique -> Unique -> [(Unique, Type)] -> EmitM Builder
+emitInductiveTypeCtorFn indName name args = do
+  obj <- placeholder
+  (stmts, setMembers) <- unzip <$> zipWithM (\i (n, t) -> ctorSet i obj (emitName n) t) [0 ..] args
+  let args' = map (\(n, t) -> emitType t <> " " <> emitName n) args
+  let numObjs = List.length args
+  let alloc = text "sfd_ctor_alloc(" <> decimal numObjs <> ")"
+  let expr =
+        (emitName indName <> " " <> obj <> " = " <> alloc)
+          : setMembers
+  return $
+    emitName indName
+      <> " "
+      <> emitName name
+      <> "("
+      <> intercalate ", " args'
+      <> ") {\n"
+      <> emitStmts 1 (concat stmts)
+      <> emitStmts 1 expr
+      <> indent 1
+      <> "return "
+      <> obj
+      <> ";\n"
+      <> "}\n"
+  where
+    ctorSet :: Int -> Builder -> Builder -> Type -> EmitM ([Builder], Builder)
+    ctorSet i obj e t = do
+      (stmts, e') <- emitBoxed t e
+      return
+        ( stmts,
+          "sfd_ctor_set("
+            <> intercalate ", " [obj, decimal i, e']
+            <> ")"
+        )
 
 emitDef :: (Unique, Core.Def) -> EmitM Builder
 emitDef (name, def) = do
@@ -132,12 +196,12 @@ emitStmts i stmts = do
   let endStmts = case stmts of
         [] -> text ""
         _ -> text ";\n"
-   in intercalate ";\n" (map (indent i <>) stmts) <> endStmts <> indent i
+   in intercalate ";\n" (map (indent i <>) stmts) <> endStmts
 
 emitExpr :: Indent -> (Builder -> Builder) -> Core.Expr -> EmitM Builder
 emitExpr i' mapEnd expr = do
   (stmts, expr') <- emitExpr' i' expr
-  return $ emitStmts i' stmts <> mapEnd expr'
+  return $ emitStmts i' stmts <> indent i' <> mapEnd expr'
   where
     emitExpr' :: Indent -> Core.Expr -> EmitM ([Builder], Builder)
     emitExpr' i = \case
@@ -224,7 +288,7 @@ emitExpr i' mapEnd expr = do
     emitGuards i [guard] e = do
       (stmts, guard') <- emitExpr' i guard
       let stmts' = emitStmts i stmts
-      return $ stmts' <> "if (" <> guard' <> ") {\n" <> e <> indent i <> "}"
+      return $ stmts' <> indent i <> "if (" <> guard' <> ") {\n" <> e <> indent i <> "}"
     emitGuards _ _ _ = undefined
 
     emitVar :: Unique -> EmitM ([Builder], Builder)
@@ -266,6 +330,14 @@ emitName = \case
 
 emitName' :: (a -> Builder) -> Name a -> Builder
 emitName' f n = intercalate "_" (map f $ Name.toList n)
+
+emitBoxed :: Type -> Builder -> EmitM ([Builder], Builder)
+emitBoxed t e = do
+  if Type.isBoxed t
+    then return ([], e)
+    else do
+      obj <- placeholder
+      return (["sfd_object* " <> obj <> " = sfd_box((size_t)(" <> e <> "))"], obj)
 
 --
 -- emitExternName :: Unique -> Builder

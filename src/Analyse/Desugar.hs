@@ -5,9 +5,11 @@ import Analyse.Type (Type)
 import Analyse.Type qualified as Type
 import Analyse.Unique (Unique)
 import Analyse.Unique qualified as Unique
+import Control.Monad (forM)
 import Control.Monad.State (State, evalState, execState, gets, modify, zipWithM)
 import Core (Core (..))
 import Core qualified
+import Data.Bifunctor (second)
 import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Text (Text)
@@ -38,6 +40,9 @@ newExternDef k v = modifyCore (\s -> s {core_extern_defs = (k, v) : core_extern_
 newTypeDef :: Unique -> Core.TypeDef -> DesugarM ()
 newTypeDef k v = modifyCore (\s -> s {core_type_defs = (k, v) : core_type_defs s})
 
+newInductiveType :: Unique -> Core.InductiveType -> DesugarM ()
+newInductiveType k v = modifyCore (\s -> s {core_inductive_types = (k, v) : core_inductive_types s})
+
 desugar :: Typed a => Unique.Id -> Ast.Expr Unique a -> DesugarState
 desugar gen program = execState (desugarProgram program) initState
   where
@@ -47,7 +52,8 @@ desugar gen program = execState (desugarProgram program) initState
             Core
               { core_defs = [],
                 core_type_defs = [],
-                core_extern_defs = []
+                core_extern_defs = [],
+                core_inductive_types = []
               },
           ds_unique_gen = gen
         }
@@ -133,8 +139,20 @@ desugarProgram node@(Ast.Node kind _) = case kind of
           }
       )
     desugarProgram rest
-  Ast.Type Ast.Extern name cident rest -> do
+  Ast.ExternType name cident rest -> do
     newTypeDef name (Core.TypeDefExtern cident (nodeType node))
+    desugarProgram rest
+  Ast.InductiveType name ctors rest -> do
+    let ctors' =
+          map
+            (\(Ast.Ctor ctorName ctorArgs) -> (ctorName, Core.InductiveTypeCtor (map (second nodeType) ctorArgs)))
+            ctors
+    newInductiveType
+      name
+      ( Core.InductiveType
+          { Core.inductive_type_ctors = ctors'
+          }
+      )
     desugarProgram rest
   Ast.Unit -> return ()
   _ -> undefined

@@ -88,3 +88,9 @@ isIntrinsic :: Type -> Bool
 isIntrinsic = \case
   Intrinsic _ -> True
   _ -> False
+
+isBoxed :: Type -> Bool
+isBoxed = \case
+  Intrinsic (Name "Int") -> False
+  Intrinsic (Name "Bool") -> False
+  _ -> True

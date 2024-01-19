@@ -7,14 +7,15 @@
 module Analyse.Infer where
 
 import Analyse.Subtype (subtype)
-import Analyse.TcContext (TcCtxM, TcError (TcError), TcState (..), apply, fresh, getEnv, instantiate, solve, instantiateType)
+import Analyse.TcContext (TcCtxM, TcError (TcError), TcState (..), apply, fresh, getEnv, instantiate, instantiateType, solve)
 import Analyse.Type (Type)
 import Analyse.Type qualified as Type
 import Analyse.Unique (Unique)
 import Analyse.Unique qualified as Unique
-import Control.Monad (zipWithM, forM)
+import Control.Monad (forM, zipWithM)
 import Control.Monad.Error (MonadError (throwError))
 import Control.Monad.State (gets)
+import Data.Bifunctor (second)
 import Data.List (find)
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
@@ -43,9 +44,9 @@ instance Spanned (Span, a) where
 wfType :: Ast.Type Unique Span -> Ast.Type Unique (Span, Type)
 wfType (Ast.Node ty sp) = case ty of
   Ast.TSymbol alpha -> Ast.Node (Ast.TSymbol alpha) (sp, Type.Base alpha)
-  Ast.TBorrow a -> 
+  Ast.TBorrow a ->
     let a' = wfType a
-    in Ast.Node (Ast.TBorrow a') (sp, Type.Borrow $ nodeType a')
+     in Ast.Node (Ast.TBorrow a') (sp, Type.Borrow $ nodeType a')
   Ast.TArrow a b ->
     let a' = wfType a
         b' = wfType b
@@ -93,8 +94,9 @@ synthApp sp t args = case (t, args) of
   (Type.Arrow a c, [arg]) -> do
     arg' <- check arg a
     return (c, [arg'])
-  (Type.Arrow (Type.Tuple as) _, _) | length args /= length as ->
-    throwError $ TcError (Error sp "function called with wrong number of arguments")
+  (Type.Arrow (Type.Tuple as) _, _)
+    | length args /= length as ->
+        throwError $ TcError (Error sp "function called with wrong number of arguments")
   (Type.Arrow (Type.Tuple as) c, _) -> do
     args' <- zipWithM check args as
     return (c, args')
@@ -209,13 +211,19 @@ synth (Ast.Node expr sp) = case expr of
     instantiate name (apply env funcTy)
     rest' <- synth rest
     return $ Ast.Node (Ast.ExternDef name args' ret' cident rest') (sp, funcTy)
-  Ast.Type extern name cident rest -> do
-    let t = case (extern, name) of
-          (Ast.Extern, Unique.Builtin name') -> Type.Intrinsic name'
+  Ast.ExternType name cident rest -> do
+    let t = case name of
+          Unique.Builtin name' -> Type.Intrinsic name'
           _ -> Type.Base name
     instantiateType name t
     rest' <- synth rest
-    return $ Ast.Node (Ast.Type extern name cident rest') (sp, t)
+    return $ Ast.Node (Ast.ExternType name cident rest') (sp, t)
+  Ast.InductiveType name ctors rest -> do
+    let t = Type.Base name
+    instantiateType name t
+    ctors' <- mapM (synthInductiveCtor t) ctors
+    rest' <- synth rest
+    return $ Ast.Node (Ast.InductiveType name ctors' rest') (sp, Type.unit)
   Ast.Match scrutinee branches -> do
     scrutinee' <- synth scrutinee
     let t = nodeType scrutinee'
@@ -228,12 +236,23 @@ synth (Ast.Node expr sp) = case expr of
     env <- getEnv
     return $ Ast.Node (Ast.Match scrutinee' branches') (sp, apply env alpha)
 
+synthInductiveCtor ::
+  Type ->
+  Ast.Ctor Unique Span ->
+  TcCtxM (Ast.Ctor Unique (Span, Type))
+synthInductiveCtor ctorT (Ast.Ctor name args) = do
+  let args' = map (second wfType) args
+  let argsTys = map (nodeType . snd) args'
+  let ctorFn = Type.arrow argsTys ctorT
+  instantiate name ctorFn
+  return $ Ast.Ctor name args'
+
 applyDotType :: Span -> Type -> Type -> TcCtxM Type
 applyDotType sp f b = case f of
   Type.Arrow a@(Type.Tuple []) c -> do
     subtype sp a b
     return c
-  Type.Arrow (Type.Tuple (a:as)) c -> do
+  Type.Arrow (Type.Tuple (a : as)) c -> do
     subtype sp a b
     return $ Type.arrow as c
   Type.Arrow a c -> do

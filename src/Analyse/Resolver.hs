@@ -2,20 +2,20 @@ module Analyse.Resolver where
 
 import Analyse.Unique (Unique)
 import Analyse.Unique qualified as Unique
-import Control.Monad (foldM)
+import Control.Monad (foldM, forM)
 import Control.Monad.Except (ExceptT, MonadError (throwError), runExceptT)
 import Control.Monad.State (MonadState (get), State, evalState, gets, modify, runState)
 import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Debug.Trace (traceShowM)
 import Error (Error (..))
 import Span (Span)
 import Syntax.Ast (node, node2, node3)
 import Syntax.Ast qualified as Ast
 import Syntax.Name (Name (..))
 import Syntax.Name qualified as Name
-import Debug.Trace (traceShowM)
 
 type ResolvedMap = Map (Name Text) Unique
 
@@ -117,16 +117,32 @@ resolveExpr env expr =
           (_, args') <- foldM (\(env'', pats) pat -> fmap (: pats) <$> instantiatePattern env'' pat) (env', []) args
           rest' <- resolveExpr env' rest
           return $ Ast.Node (Ast.ExternDef name' (reverse args') ret' cident rest') sp
-        Ast.Type extern name cident rest -> do
-          (env', name') <- case (extern, Name.moduleName name `elem` intrinsicTypes) of
-            (Ast.Extern, True) -> return (Map.insert name (Unique.Builtin name) env, Unique.Builtin name)
-            _ -> instantiate env name
+        Ast.ExternType name cident rest -> do
+          (env', name') <- if Name.moduleName name `elem` intrinsicTypes then return (Map.insert name (Unique.Builtin name) env, Unique.Builtin name) else instantiate env name
           rest' <- resolveExpr env' rest
-          return $ Ast.Node (Ast.Type extern name' cident rest') sp
+          return $ Ast.Node (Ast.ExternType name' cident rest') sp
+        Ast.InductiveType name ctors rest -> do
+          (env', name') <- instantiate env name
+          (env'', ctors') <- foldM (\(env'', pats) pat -> fmap (: pats) <$> instantiateCtor env'' name pat) (env', []) ctors
+          rest' <- resolveExpr env'' rest
+          return $ Ast.Node (Ast.InductiveType name' ctors' rest') sp
         Ast.Match scrutinee branches -> do
           scrutinee' <- resolveExpr env scrutinee
           branches' <- mapM (resolveMatchBranch env) branches
           return $ Ast.Node (Ast.Match scrutinee' branches') sp
+
+instantiateCtor ::
+  ResolvedMap ->
+  Name Text ->
+  Ast.Ctor (Name Text) Span ->
+  ResolverM (ResolvedMap, Ast.Ctor Unique Span)
+instantiateCtor env namespace (Ast.Ctor name args) = do
+  args' <- forM args $ \(arg, t) -> do
+    (_, arg') <- instantiate env arg
+    t' <- resolveType env t
+    return (arg', t')
+  (env', name') <- instantiate env (namespace <> name)
+  return (env', Ast.Ctor name' args')
 
 resolveMatchBranch ::
   ResolvedMap ->
