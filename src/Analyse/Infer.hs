@@ -65,6 +65,13 @@ instantiatePattern (Ast.Node pat sp) scrutinee = case pat of
     subtype sp scrutinee t't
     p' <- instantiatePattern p t't
     return $ Ast.Node (Ast.PAnno p' t') (sp, t't)
+  Ast.PCtor alpha args -> do
+    ctorF <- synthSymbol alpha >>= \case
+      Just t -> return t
+      Nothing -> undefined -- should be unreachable (caught in resolver)
+    let (argsT, returnT) = Type.arrowUnzip ctorF
+    args' <- zipWithM instantiatePattern args argsT
+    return $ Ast.Node (Ast.PCtor alpha args') (sp, returnT)
   Ast.PWildcard -> return $ Ast.Node Ast.PWildcard (sp, scrutinee)
   Ast.PNumeric num -> do
     subtype sp scrutinee Type.int
@@ -243,7 +250,7 @@ synthInductiveCtor ::
 synthInductiveCtor ctorT (Ast.Ctor name args) = do
   let args' = map (second wfType) args
   let argsTys = map (nodeType . snd) args'
-  let ctorFn = Type.arrow argsTys ctorT
+  let ctorFn = Type.ctor argsTys ctorT
   instantiate name ctorFn
   return $ Ast.Ctor name args'
 

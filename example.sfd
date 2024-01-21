@@ -14,14 +14,40 @@ extern def IO.getStdout() : Handle = "sfd_io_get_stdout"
 extern def Handle.putStr(handle : Handle, string : &String) : Int = "sfd_io_put_str"
 
 extern def Int.add(a b : Int) : Int = "sfd_int_add"
+extern def Int.sub(a b : Int) : Int = "sfd_int_sub"
 extern def Int.mul(a b : Int) : Int = "sfd_int_mul"
 extern def Int.equal(a b : Int) : Bool = "sfd_int_eql"
 
-type Option {
-  some(a b c d e f : String),
-  none
+type Result {
+  ok(a : String),
+  err(b : Int)
 }
 
+type List {
+  cons(a : String, b : List),
+  nil
+}
+
+def List.length(a : List) : Int =
+  match a {
+    List.cons(_, xs) => xs.length().add(1),
+    List.nil => 0
+  }
+
+def List.replicate(x : String, n : Int) : List =
+  match n {
+    0 => List.nil,
+    _ => List.cons(x, List.replicate(x, n.sub(1)))
+  }
+
+def List.toString(list : List) : String =
+  match list {
+    List.nil => "[]",
+    List.cons(x, xs) => xs.toString().append(" :: ").append(x)
+  }
+
 def main() : Int =
-  let x = Option.some("a", "a", "a", "a", "a", "a");
+  let x = List.replicate("apple", 10).toString();
+  let stdout = IO.getStdout();
+  let _ = stdout.putStr(x);
   0

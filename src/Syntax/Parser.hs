@@ -1,4 +1,5 @@
 {-# LANGUAGE TupleSections #-}
+
 module Syntax.Parser where
 
 import Control.Applicative (Alternative (..))
@@ -66,7 +67,10 @@ nameP = Name.fromList <$> M.sepBy1 symbolP "."
 --     <*> M.takeWhile1P (Just "C identifier") (\c -> isAlphaNum c || c == '_')
 
 stringLit :: Parser Text
-stringLit = M.between (symbol "\"") (symbol "\"") $ M.takeWhileP (Just "string") (/= '"')
+stringLit =
+  lexeme $
+    M.between (M.char '"') (M.char '"') $
+      M.takeWhileP (Just "string") (/= '"')
 
 pfoldr :: Parser a -> Parser b -> (a -> c) -> (a -> b -> c) -> Parser c
 pfoldr pa pb fa fab = pa >>= \a -> (fab a <$> pb) <|> return (fa a)
@@ -98,9 +102,12 @@ typeP = node typeNode
 patternBase :: Parser (TNode Ast.PatternNode)
 patternBase =
   paren patternNode
-    <|> (Ast.PSymbol <$> nameP)
     <|> (Ast.PNumeric <$> M.takeWhile1P (Just "number") isDigit)
     <|> (Ast.PWildcard <$ symbol "_")
+    <|> patternCtor
+
+patternCtor :: Parser (TNode Ast.PatternNode)
+patternCtor = pfoldr nameP (paren $ M.sepBy1 patternP (symbol ",")) Ast.PSymbol Ast.PCtor
 
 patternAnno :: Parser (TNode Ast.PatternNode)
 patternAnno = pfoldr (node $ lexeme patternBase) (symbol ":" >> typeP) Ast.node_kind Ast.PAnno
@@ -231,7 +238,7 @@ stmtExternType = do
 
 program :: Parser (Node Ast.ExprNode)
 program = do
-  stmts <- some stmt
+  stmts <- some stmt <* M.eof
   let unit = Ast.Node Ast.Unit (Span 0 0)
   return $ foldr' foldStmt unit stmts
   where

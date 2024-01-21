@@ -7,9 +7,10 @@ import Analyse.Type (Type)
 import Analyse.Type qualified as Type
 import Analyse.Unique (Unique)
 import Analyse.Unique qualified as Unique
-import Control.Monad (zipWithM)
+import Control.Monad (mapAndUnzipM, zipWithM)
 import Control.Monad.State (State, evalState, gets, modify)
-import Core (Alt (Alt), AltCon (..), Arg (..), Core (..), Def (..), Expr (..), ExternDef (extern_def_args, extern_def_name, extern_def_return_type), Guards, InductiveType (..), InductiveTypeCtor (inductive_type_ctor_args), Literal (..), TypeDef (..))
+import Core (Alt (Alt), AltCon (..), Arg (..), Core (..), Def (..), Expr (..), ExternDef (extern_def_args, extern_def_name, extern_def_return_type), Guards, InductiveType (..), InductiveTypeCtor (..), Literal (..), TypeDef (..), boundVars)
+import Data.Bifunctor (second)
 import Data.Bifunctor qualified
 import Data.Foldable (Foldable (foldl', foldr'))
 import Data.Map (Map)
@@ -30,6 +31,7 @@ data EmitState = EmitState
   { es_vars :: Map Unique Type,
     es_extern_vars :: Map Unique Text,
     es_placeholder_id :: Unique.Id,
+    es_ctor_indexes :: Map Unique Int,
     es_rc :: Map Unique Int
   }
 
@@ -38,6 +40,12 @@ type EmitM = State EmitState
 typeOfName :: Unique -> EmitM Type
 typeOfName name =
   gets (Map.lookup name . es_vars) >>= \case
+    Just t -> return t
+    Nothing -> undefined
+
+ctorIndex :: Unique -> EmitM Int
+ctorIndex name =
+  gets (Map.lookup name . es_ctor_indexes) >>= \case
     Just t -> return t
     Nothing -> undefined
 
@@ -71,16 +79,22 @@ emit core uid vars = Builder.run (evalState builder emitState)
         { es_vars = vars,
           es_extern_vars = Map.fromList externVars,
           es_placeholder_id = uid,
+          es_ctor_indexes = ctorIndexes,
           es_rc = Map.fromList $ map (,1) (Map.keys vars)
         }
 
     header = text "#include <scaffold.h>"
 
-    externVars = map (Data.Bifunctor.second extern_def_name) $ Core.core_extern_defs core
+    externVars = map (second extern_def_name) $ Core.core_extern_defs core
+
+    ctorIndexes =
+      Map.fromList $
+        concatMap (map (second Core.inductive_type_ctor_pos) . Core.inductive_type_ctors . snd) $
+          Core.core_inductive_types core
 
     emitDefs = intercalate "\n\n" <$> mapM emitDef (Core.core_defs core)
     emitExternDefs = intercalate "\n\n" <$> mapM emitExternDef (reverse $ Core.core_extern_defs core)
-    emitInductiveTypes = intercalate "\n\n" <$> mapM emitInductiveType (Core.core_inductive_types core)
+    emitInductiveTypes = intercalate "\n\n" <$> mapM emitInductiveType (reverse $ Core.core_inductive_types core)
     emitTypeDefs = intercalate "\n" $ map emitTypeDef (reverse $ Core.core_type_defs core)
 
 emitTypeDef :: (Unique, Core.TypeDef) -> Builder
@@ -114,8 +128,9 @@ emitInductiveType (name, ty) = do
 emitInductiveTypeCtor :: Unique -> (Unique, Core.InductiveTypeCtor) -> EmitM Builder
 emitInductiveTypeCtor indName (name, ctor) = do
   let args = Core.inductive_type_ctor_args ctor
+  let ctorIdx = Core.inductive_type_ctor_pos ctor
   let argsMembers = map (\(arg, t) -> emitType t <> " " <> emitName arg) args
-  fns <- emitInductiveTypeCtorFn indName name args
+  fns <- emitInductiveTypeCtorFn ctorIdx indName name args
   return $
     "typedef struct {\n"
       <> emitStmts 1 argsMembers
@@ -125,13 +140,13 @@ emitInductiveTypeCtor indName (name, ctor) = do
       <> ";\n\n"
       <> fns
 
-emitInductiveTypeCtorFn :: Unique -> Unique -> [(Unique, Type)] -> EmitM Builder
-emitInductiveTypeCtorFn indName name args = do
+emitInductiveTypeCtorFn :: Int -> Unique -> Unique -> [(Unique, Type)] -> EmitM Builder
+emitInductiveTypeCtorFn ctorIdx indName name args = do
   obj <- placeholder
   (stmts, setMembers) <- unzip <$> zipWithM (\i (n, t) -> ctorSet i obj (emitName n) t) [0 ..] args
   let args' = map (\(n, t) -> emitType t <> " " <> emitName n) args
   let numObjs = List.length args
-  let alloc = text "sfd_ctor_alloc(" <> decimal numObjs <> ")"
+  let alloc = text "sfd_ctor_alloc(" <> decimal ctorIdx <> ", " <> decimal numObjs <> ")"
   let expr =
         (emitName indName <> " " <> obj <> " = " <> alloc)
           : setMembers
@@ -251,6 +266,27 @@ emitExpr i' mapEnd expr = do
               <> "}"
               <> (if List.null rest then "" else " else ")
               <> rest'
+        (Core.AltCtor alpha args, _) -> do
+          rest' <- emitCaseAlts i res scrut rest
+          (cond', binds') <- mapAndUnzipM (\(j, (arg, t')) -> emitCtorArg scrut j arg t') (zip [0 ..] args)
+
+          let cond = concat cond'
+              binds = concat binds'
+
+          alphaIdx <- ctorIndex alpha
+          let isTag = "sfd_obj_tag(" <> scrut <> ") == " <> decimal alphaIdx
+
+          return $
+            "if ("
+              <> intercalate " && " (isTag : cond)
+              <> ") "
+              <> "{\n"
+              <> emitStmts (i + 1) binds
+              <> e'
+              <> indent i
+              <> "}"
+              <> (if List.null rest then "" else " else ")
+              <> rest'
         (Core.AltBind x, []) -> do
           return $
             "{\n"
@@ -282,6 +318,21 @@ emitExpr i' mapEnd expr = do
               <> indent i
               <> "}"
         (Core.AltWildcard, _) -> return $ "{\n" <> e' <> indent i <> "}"
+
+    emitCtorArg :: Builder -> Int -> AltCon -> Type -> EmitM ([Builder], [Builder])
+    emitCtorArg scrut i con t = do
+      let getArgs = [scrut, decimal i]
+      let ctorGet = "sfd_ctor_get(" <> intercalate ", " getArgs <> ")"
+      let argExpr =
+            if Type.isBoxed t
+              then ctorGet
+              else "(" <> emitType t <> ")(sfd_unbox(" <> ctorGet <> "))"
+      case con of
+        Core.AltLiteral lit -> do
+          return ([argExpr <> " == " <> emitLiteral lit], [])
+        Core.AltBind x -> do 
+          return ([], [emitType t <> " " <> emitName x <> " = " <> argExpr])
+        Core.AltWildcard -> return ([], [])
 
     emitGuards :: Indent -> Core.Guards -> Builder -> EmitM Builder
     emitGuards _ [] e = return e

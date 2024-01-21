@@ -74,6 +74,15 @@ tuple xs = Tuple xs
 arrow :: [Type] -> Type -> Type
 arrow args = Arrow (tuple args)
 
+ctor :: [Type] -> Type -> Type
+ctor [] x = x
+ctor args x = Arrow (tuple args) x
+
+arrowUnzip :: Type -> ([Type], Type)
+arrowUnzip (Arrow (Tuple xs) c) = (xs, c)
+arrowUnzip (Arrow a c) = ([a], c)
+arrowUnzip _ = undefined
+
 unarrow :: Type -> [Type]
 unarrow (Arrow (Tuple xs) c) = xs ++ [c]
 unarrow (Arrow a c) = [a, c]

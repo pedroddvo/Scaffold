@@ -18,7 +18,8 @@ import Syntax.Ast qualified as Ast
 
 data DesugarState = DesugarState
   { ds_core :: Core,
-    ds_unique_gen :: Unique.Id
+    ds_unique_gen :: Unique.Id,
+    ds_inductive_ctor_args :: Map Unique Int
   }
 
 type DesugarM = State DesugarState
@@ -55,19 +56,25 @@ desugar gen program = execState (desugarProgram program) initState
                 core_extern_defs = [],
                 core_inductive_types = []
               },
-          ds_unique_gen = gen
+          ds_unique_gen = gen,
+          ds_inductive_ctor_args = Map.empty
         }
 
 desugarPattern :: Typed a => Ast.Pattern Unique a -> DesugarM (Core.AltCon, Type)
 desugarPattern node@(Ast.Node kind _) = case kind of
   Ast.PAnno p _ -> desugarPattern p
+  Ast.PCtor alpha args -> do
+    args' <- mapM desugarPattern args
+    return (Core.AltCtor alpha args', nodeType node)
   Ast.PSymbol uniq -> return (Core.AltBind uniq, nodeType node)
   Ast.PWildcard -> return (Core.AltWildcard, nodeType node)
   Ast.PNumeric num -> return (Core.AltLiteral (Core.LitNumeric num), nodeType node)
 
 desugarExpr :: Typed a => Ast.Expr Unique a -> DesugarM Core.Expr
 desugarExpr thisNode@(Ast.Node kind d) = case kind of
-  Ast.Symbol uniq -> return $ Core.Var uniq
+  Ast.Symbol uniq -> gets (Map.lookup uniq . ds_inductive_ctor_args) >>= \case 
+    Just 0 -> return $ Core.App (nodeType thisNode) (Core.Var uniq) []
+    _ -> return $ Core.Var uniq
   Ast.Numeric num -> return $ Core.Lit (Core.LitNumeric num)
   Ast.String str -> return $ Core.Lit (Core.LitString str)
   Ast.Let p e1 e2 -> do
@@ -143,10 +150,7 @@ desugarProgram node@(Ast.Node kind _) = case kind of
     newTypeDef name (Core.TypeDefExtern cident (nodeType node))
     desugarProgram rest
   Ast.InductiveType name ctors rest -> do
-    let ctors' =
-          map
-            (\(Ast.Ctor ctorName ctorArgs) -> (ctorName, Core.InductiveTypeCtor (map (second nodeType) ctorArgs)))
-            ctors
+    ctors' <- zipWithM desugarCtor [0 ..] ctors
     newInductiveType
       name
       ( Core.InductiveType
@@ -156,3 +160,8 @@ desugarProgram node@(Ast.Node kind _) = case kind of
     desugarProgram rest
   Ast.Unit -> return ()
   _ -> undefined
+
+desugarCtor :: (Typed a) => Int -> Ast.Ctor Unique a -> DesugarM (Unique, Core.InductiveTypeCtor)
+desugarCtor i (Ast.Ctor ctorName ctorArgs) = do
+  modify (\s -> s {ds_inductive_ctor_args = Map.insert ctorName (length ctorArgs) (ds_inductive_ctor_args s)})
+  return (ctorName, Core.InductiveTypeCtor (map (second nodeType) ctorArgs) i)

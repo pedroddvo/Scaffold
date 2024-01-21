@@ -24,6 +24,7 @@ type Type v = Node (TypeNode v)
 
 data PatternNode v a
   = PSymbol v
+  | PCtor v [Pattern v a]
   | PAnno (Pattern v a) (Type v a)
   | PNumeric Text
   | PWildcard

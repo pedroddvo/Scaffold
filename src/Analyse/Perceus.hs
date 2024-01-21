@@ -49,6 +49,7 @@ translateAlts scrutinee alts t = do
   scrutOwned <- isOwned scrutinee
   live <- getLive
   owned <- getOwned
+  when scrutOwned $ markLive scrutinee
   reverseMapM (translateAlt live owned scrutOwned t) alts
 
 translateAlt :: Live -> Owned -> Bool -> Type -> Alt -> PerceusM Alt
@@ -59,10 +60,11 @@ translateAlt live outsideOwned scrutOwned scrutT (Alt con guards t e) = do
     (e', liveAlt) <- isolateWith live $ translate e
     markLives liveAlt
     let drops = outsideOwned \\ liveAlt
-    -- traceShowM (outsideOwned \\ liveAlt)
+    let dups = MS.intersection ownedBvs liveAlt
     guards' <- mapM (withOwned MS.empty . translate) guards
-    e'' <- foldM (flip genDrop) e' drops
-    return $ Alt con guards' t e''
+    eWithDrops <- foldM (flip genDrop) e' drops
+    eWithDups <- foldM (flip genDup) eWithDrops dups
+    return $ Alt con guards' t eWithDups
 
 -- translateAlts :: Unique -> [Alt] -> Type -> PerceusM [Alt]
 -- translateAlts scrutinee alts t = do
@@ -117,13 +119,10 @@ instantiateBoundVars scrutT con = case (scrutT, con) of
     isRc <- typeIsRefCounted t
     unless isRc $ setNotRC n
     return $ MS.singleton n
+  (_, AltCtor _ args) -> do
+    args' <- mapM (\(n, t) -> instantiateBoundVars t n) args
+    return $ MS.unions args'
   (_, AltWildcard) -> return MS.empty
-
-boundVars :: AltCon -> MultiSet Unique
-boundVars = \case
-  AltLiteral _ -> MS.empty
-  AltBind n -> MS.singleton n
-  AltWildcard -> MS.empty
 
 translateApp :: [Arg] -> Type -> Expr -> PerceusM Expr
 translateApp args t expr = do
@@ -187,11 +186,7 @@ runPerceus nonRc globs uuid core =
        in (def {def_expr = expr}, uuid')
 
     runExpr' args e = do
-      args' <- forM args $ \(x, t) -> do
-        let bvs = boundVars x
-        isRc <- typeIsRefCounted t
-        unless isRc $ mapM_ setNotRC bvs
-        return bvs
+      args' <- mapM (uncurry $ flip instantiateBoundVars) args
 
       ownedInScope (MS.unions args') (translate e)
 

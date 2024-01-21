@@ -8,7 +8,8 @@ import Data.List (foldl', intercalate)
 import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.MultiSet (MultiSet)
-import Data.MultiSet qualified as S
+import Data.Set (Set)
+import Data.Set qualified as S
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Syntax.Name
@@ -34,6 +35,7 @@ data Alt = Alt AltCon Guards Type Expr
 data AltCon
   = AltLiteral Literal
   | AltBind Unique
+  | AltCtor Unique [(AltCon, Type)]
   | AltWildcard
 
 data Literal = LitNumeric Text | LitString Text
@@ -49,8 +51,9 @@ newtype InductiveType = InductiveType
   { inductive_type_ctors :: [(Unique, InductiveTypeCtor)]
   }
 
-newtype InductiveTypeCtor = InductiveTypeCtor
-  { inductive_type_ctor_args :: [(Unique, Type)]
+data InductiveTypeCtor = InductiveTypeCtor
+  { inductive_type_ctor_args :: [(Unique, Type)],
+    inductive_type_ctor_pos :: Int
   }
 
 data ExternDef = ExternDef
@@ -77,6 +80,7 @@ instance Show Literal where
 instance Show AltCon where
   show (AltLiteral lit) = show lit
   show (AltBind uniq) = show uniq
+  show (AltCtor name args) = show name ++ "(" ++ intercalate ", " (map show args) ++ ")"
   show AltWildcard = "_"
 
 instance Show Alt where
@@ -123,3 +127,10 @@ foldCore f a core = (core', a1)
 --     fvAltCon e (AltLiteral _) = e
 --     fvAltCon e (AltBind x) = S.delete x e
 --     fvAltCon e AltWildcard = e
+
+boundVars :: AltCon -> Set Unique
+boundVars = \case
+  AltLiteral _ -> S.empty
+  AltBind n -> S.singleton n
+  AltCtor _ args -> S.unions $ map (boundVars . fst) args
+  AltWildcard -> S.empty
