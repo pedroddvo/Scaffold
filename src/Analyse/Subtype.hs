@@ -4,13 +4,13 @@ import Analyse.TcContext (TcCtxM, TcError (SubtypeFailure, TcError), apply, fres
 import Analyse.Type (Type)
 import Analyse.Type qualified as Type
 import Analyse.Unique (Unique)
+import Control.Monad (foldM_)
 import Control.Monad.Except (MonadError (catchError, throwError))
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Debug.Trace (traceShowId, traceShowM)
 import Error (Error (..))
 import Span (Span)
-import Control.Monad (foldM_)
 
 subtype :: Span -> Type -> Type -> TcCtxM ()
 subtype sp a b =
@@ -20,6 +20,13 @@ subtype sp a b =
         SubtypeFailure -> throwError $ TcError (Error sp $ Text.pack ("type mismatch between " ++ show a ++ " and " ++ show b))
         TcError err -> throwError $ TcError err
     )
+
+instantiateForalls :: Type -> TcCtxM Type
+instantiateForalls = \case
+  Type.Forall alpha a -> do
+    alphaE <- fresh
+    return $ Type.substitute (Type.Named alpha) (Type.Exist' alphaE) a
+  t -> return t
 
 subtype' :: Type -> Type -> TcCtxM ()
 subtype' a b = case (a, b) of
@@ -32,6 +39,15 @@ subtype' a b = case (a, b) of
     subtype' b1 a1
     env <- getEnv
     subtype' (apply env a2) (apply env b2)
+  (Type.App a1 a2, Type.App b1 b2) -> do
+    subtype' b1 a1
+    env <- getEnv
+    mapM_ (\(a', b') -> subtype' (apply env a') (apply env b')) (zip a2 b2)
+  (Type.Forall alpha a', b') -> do
+    alphaE <- fresh
+    let instA = Type.substitute (Type.Named alpha) (Type.Exist' alphaE) a'
+    subtype' instA b'
+  (a', Type.Forall _ b') -> subtype' a' b'
   (Type.Var alpha@(Type.Exist alphaE), _)
     | not $ Set.member alpha (Type.freeVars b) ->
         instantiateL alphaE b
@@ -60,6 +76,7 @@ instantiateL alphaE a =
         alphas <- mapM (const fresh) as
         solve alphaE (Type.Tuple $ map Type.Exist' alphas)
         mapM_ (uncurry instantiateL) (zip alphas as)
+      Type.Forall _ b -> instantiateL alphaE b
       _ -> undefined
 
 instantiateR :: Type -> Unique -> TcCtxM ()
@@ -82,4 +99,8 @@ instantiateR a alphaE =
         alphas <- mapM (const fresh) as
         solve alphaE (Type.Tuple $ map Type.Exist' alphas)
         mapM_ (uncurry instantiateR) (zip as alphas)
+      Type.Forall beta b -> do
+        betaE <- fresh
+        let instB = Type.substitute (Type.Named beta) (Type.Exist' betaE) b
+        instantiateR instB alphaE
       _ -> undefined

@@ -15,6 +15,7 @@ import Data.Map qualified as Map
 import Data.Text (Text)
 import Debug.Trace
 import Syntax.Ast qualified as Ast
+import Syntax.Name (Name (..))
 
 data DesugarState = DesugarState
   { ds_core :: Core,
@@ -72,9 +73,10 @@ desugarPattern node@(Ast.Node kind _) = case kind of
 
 desugarExpr :: Typed a => Ast.Expr Unique a -> DesugarM Core.Expr
 desugarExpr thisNode@(Ast.Node kind d) = case kind of
-  Ast.Symbol uniq -> gets (Map.lookup uniq . ds_inductive_ctor_args) >>= \case 
-    Just 0 -> return $ Core.App (nodeType thisNode) (Core.Var uniq) []
-    _ -> return $ Core.Var uniq
+  Ast.Symbol uniq ->
+    gets (Map.lookup uniq . ds_inductive_ctor_args) >>= \case
+      Just 0 -> return $ Core.App (nodeType thisNode) (Core.Var uniq) []
+      _ -> return $ Core.Var uniq
   Ast.Numeric num -> return $ Core.Lit (Core.LitNumeric num)
   Ast.String str -> return $ Core.Lit (Core.LitString str)
   Ast.Let p e1 e2 -> do
@@ -89,11 +91,10 @@ desugarExpr thisNode@(Ast.Node kind d) = case kind of
     desugarExpr (Ast.Node (Ast.App f (a : as)) d)
   Ast.App a as -> do
     a' <- desugarExpr a
-    let f = Type.unarrow $ nodeType a
+    let (_, f) = Type.unarrow $ nodeType a
     as' <- zipWithM desugarArg as f
-    let e = Core.App (nodeType thisNode) a' (map snd as')
-    let e' = foldr ($) e (concatMap fst as')
-    return e'
+    let e = Core.App (nodeType thisNode) a' as'
+    return e
   Ast.Lam p e -> do
     (name, _) <- desugarPattern p
     e' <- desugarExpr e
@@ -107,12 +108,22 @@ desugarExpr thisNode@(Ast.Node kind d) = case kind of
     return $ Core.Case e' (nodeType e) branches' (nodeType thisNode)
   _ -> undefined
 
-desugarArg :: Typed a => Ast.Expr Unique a -> Type -> DesugarM ([Core.Expr -> Core.Expr], Core.Arg)
-desugarArg e@(Ast.Node kind _) t = do
+desugarArg :: Typed a => Ast.Expr Unique a -> Type -> DesugarM Core.Arg
+desugarArg e t = do
+  let eT = nodeType e
   e' <- desugarExpr e
-  case (kind, t) of
-    (_, Type.Borrow t') -> return ([], Core.Arg t' e' Core.PassBorrow)
-    (_, t') -> return ([], Core.Arg t' e' Core.PassOwned)
+  let pass = case t of
+        Type.Borrow _ -> Core.PassBorrow
+        _ -> Core.PassOwned
+  let eBox = case t of
+        Type.Named' _
+          | not (Type.isBoxed eT) ->
+              Core.App
+                Type.boxed
+                (Core.Var $ Unique.Builtin $ Name "sfd_box")
+                [Core.Arg eT e' Core.PassOwned]
+        _ -> e'
+  return $ Core.Arg t eBox pass
 
 desugarBranch :: Typed a => Ast.MatchBranch Unique a -> DesugarM Core.Alt
 desugarBranch (pat, guards, e) = do
@@ -123,7 +134,7 @@ desugarBranch (pat, guards, e) = do
 
 desugarProgram :: Typed a => Ast.Expr Unique a -> DesugarM ()
 desugarProgram node@(Ast.Node kind _) = case kind of
-  Ast.Def name args _ e rest -> do
+  Ast.Def name _ args _ e rest -> do
     e' <- desugarExpr e
     args' <- mapM desugarPattern args
     newDef
@@ -149,7 +160,7 @@ desugarProgram node@(Ast.Node kind _) = case kind of
   Ast.ExternType name cident rest -> do
     newTypeDef name (Core.TypeDefExtern cident (nodeType node))
     desugarProgram rest
-  Ast.InductiveType name ctors rest -> do
+  Ast.InductiveType name _ ctors rest -> do
     ctors' <- zipWithM desugarCtor [0 ..] ctors
     newInductiveType
       name

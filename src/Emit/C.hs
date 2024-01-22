@@ -177,11 +177,19 @@ emitInductiveTypeCtorFn ctorIdx indName name args = do
 
 emitDef :: (Unique, Core.Def) -> EmitM Builder
 emitDef (name, def) = do
-  expr <- emitExpr 1 (\e -> "return " <> e <> ";") (Core.def_expr def)
+  let defT = Core.def_expr_type def
+  let defExpr = Core.def_expr def
+
+  vars <- gets es_vars
+  let unbox =
+        if not (Type.isBoxed defT) && isBoxed vars defExpr
+          then emitUnbox defT
+          else id
+  expr <- emitExpr 1 (\e -> "return " <> unbox e <> ";") defExpr
   defArgs <- mapM emitDefArg (Core.def_args def)
   let (stmts, args) = unzip defArgs
   return $
-    emitType (Core.def_expr_type def)
+    emitType defT
       <> " "
       <> emitName name
       <> "("
@@ -226,11 +234,11 @@ emitExpr i' mapEnd expr = do
       Core.Let name t e e' -> emitLet i name t e e'
       Core.Case scrutinee scrutineeT alts resultT -> emitCase i scrutinee scrutineeT alts resultT
       Core.Dup x e -> do
-        let stmt = "sfd_inc_ref(" <> emitName x <> ")"
+        let stmt = "sfd_inc(" <> emitName x <> ")"
         (stmts, e') <- emitExpr' i e
         return (stmt : stmts, e')
       Core.Drop x e -> do
-        let stmt = "sfd_dec_ref(" <> emitName x <> ")"
+        let stmt = "sfd_dec(" <> emitName x <> ")"
         (stmts, e') <- emitExpr' i e
         return (stmt : stmts, e')
       Core.Lam {} -> undefined
@@ -326,11 +334,11 @@ emitExpr i' mapEnd expr = do
       let argExpr =
             if Type.isBoxed t
               then ctorGet
-              else "(" <> emitType t <> ")(sfd_unbox(" <> ctorGet <> "))"
+              else emitUnbox t ctorGet
       case con of
         Core.AltLiteral lit -> do
           return ([argExpr <> " == " <> emitLiteral lit], [])
-        Core.AltBind x -> do 
+        Core.AltBind x -> do
           return ([], [emitType t <> " " <> emitName x <> " = " <> argExpr])
         Core.AltWildcard -> return ([], [])
 
@@ -345,8 +353,8 @@ emitExpr i' mapEnd expr = do
     emitVar :: Unique -> EmitM ([Builder], Builder)
     emitVar name =
       gets (Map.lookup name . es_extern_vars) >>= \case
-        Nothing -> return ([], emitName name)
         Just cident -> return ([], text cident)
+        Nothing -> return ([], emitName name)
 
     emitApp :: Indent -> Core.Expr -> [Core.Arg] -> EmitM ([Builder], Builder)
     emitApp i f args = do
@@ -370,6 +378,8 @@ emitLiteral = \case
 emitType :: Type -> Builder
 emitType = \case
   Type.Base name -> emitName name
+  Type.Var (Type.Named _) -> emitType Type.boxed
+  Type.App a _ -> emitType a
   Type.Borrow e -> emitType e
   t -> traceShow t undefined
 
@@ -388,7 +398,28 @@ emitBoxed t e = do
     then return ([], e)
     else do
       obj <- placeholder
-      return (["sfd_object* " <> obj <> " = sfd_box((size_t)(" <> e <> "))"], obj)
+      return ([emitType Type.boxed <> " " <> obj <> " = " <> emitBox e], obj)
+
+emitBox :: Builder -> Builder
+emitBox e = "sfd_box((size_t)(" <> e <> "))"
+
+emitUnbox :: Type -> Builder -> Builder
+emitUnbox t e = "(" <> emitType t <> ")(sfd_unbox(" <> e <> "))"
+
+isBoxed :: Map Unique Type -> Expr -> Bool
+isBoxed env = \case
+  Var alpha -> maybe undefined Type.isBoxed (Map.lookup alpha env)
+  Lit LitNumeric {} -> False
+  Lit LitString {} -> True
+  App _ (Var name) _ -> case Map.lookup name env of
+    Just t -> let (_, _, retT) = Type.arrowUnzip t in Type.isBoxed retT
+    Nothing -> undefined
+  App t _ _ -> Type.isBoxed t
+  Let _ _ _ e2 -> isBoxed env e2
+  Dup _ e -> isBoxed env e
+  Drop _ e -> isBoxed env e
+  Case _ _ _ t -> Type.isBoxed t
+  Lam {} -> undefined
 
 --
 -- emitExternName :: Unique -> Builder

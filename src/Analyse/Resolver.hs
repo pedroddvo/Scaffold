@@ -75,6 +75,7 @@ resolveType env ty =
         Ast.TSymbol alpha -> node Ast.TSymbol ty <$> check env sp alpha
         Ast.TArrow a b -> node2 Ast.TArrow ty <$> resolveType env a <*> resolveType env b
         Ast.TBorrow e -> node Ast.TBorrow ty <$> resolveType env e
+        Ast.TApp a as -> node2 Ast.TApp ty <$> resolveType env a <*> mapM (resolveType env) as
 
 instantiatePattern :: ResolvedMap -> Ast.Pattern (Name Text) Span -> ResolverM (ResolvedMap, Ast.Pattern Unique Span)
 instantiatePattern env pat =
@@ -130,16 +131,17 @@ resolveExpr env expr =
           a' <- resolveExpr env a
           return $ node2 Ast.Dot expr a' (Ast.DotUnresolved b)
         Ast.Unit -> return $ Ast.Node Ast.Unit sp
-        Ast.Def name args ret e rest -> do
-          ret' <- mapM (resolveType env) ret
+        Ast.Def name vars args ret e rest -> do
           (env', name') <-
             if Name.moduleName name `elem` intrinsicDefNames
               then return (env, Unique.Builtin name)
               else instantiate env name
-          (env'', args') <- instantiateMany instantiatePattern env args
+          (envVars, vars') <- instantiateMany instantiate env' vars
+          ret' <- mapM (resolveType envVars) ret
+          (env'', args') <- instantiateMany instantiatePattern envVars args
           e' <- resolveExpr env'' e
           rest' <- resolveExpr env' rest
-          return $ Ast.Node (Ast.Def name' args' ret' e' rest') sp
+          return $ Ast.Node (Ast.Def name' vars' args' ret' e' rest') sp
         Ast.ExternDef name args ret cident rest -> do
           ret' <- resolveType env ret
           (env', name') <- instantiate env name
@@ -150,11 +152,12 @@ resolveExpr env expr =
           (env', name') <- if Name.moduleName name `elem` intrinsicTypes then return (Map.insert name (Unique.Builtin name) env, Unique.Builtin name) else instantiate env name
           rest' <- resolveExpr env' rest
           return $ Ast.Node (Ast.ExternType name' cident rest') sp
-        Ast.InductiveType name ctors rest -> do
+        Ast.InductiveType name vars ctors rest -> do
           (env', name') <- instantiate env name
-          (env'', ctors') <- instantiateMany (instantiateCtor name) env' ctors
+          (envVars, vars') <- instantiateMany instantiate env' vars
+          (env'', ctors') <- instantiateMany (instantiateCtor name) envVars ctors
           rest' <- resolveExpr env'' rest
-          return $ Ast.Node (Ast.InductiveType name' ctors' rest') sp
+          return $ Ast.Node (Ast.InductiveType name' vars' ctors' rest') sp
         Ast.Match scrutinee branches -> do
           scrutinee' <- resolveExpr env scrutinee
           branches' <- mapM (resolveMatchBranch env) branches

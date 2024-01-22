@@ -21,6 +21,8 @@ import Span (Span)
 import Syntax.Ast qualified as Ast
 import Syntax.Parser qualified as Parser
 import Text.Megaparsec qualified as M
+import Data.Bifunctor (second)
+import Control.Monad (forM)
 
 main :: IO ()
 main = inferTest "example.sfd"

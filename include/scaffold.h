@@ -1,3 +1,5 @@
+// #define SFD_DEBUG_ALLOC
+
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -42,13 +44,17 @@ static inline void sfd_set_header(sfd_object* o, unsigned tag, unsigned fields) 
 
 static inline void sfd_free(void* ptr) {
     static int x = 0;
-    printf("%d object freed\n", x++);
+#ifdef SFD_DEBUG_ALLOC
+    printf("%d object deallocated\n", x++);
+#endif
     free(ptr);
 }
 
 static inline void* sfd_malloc(size_t sz) {
     static int x = 0;
+#ifdef SFD_DEBUG_ALLOC
     printf("%d object allocated\n", x++);
+#endif
     return malloc(sz);
 }
 
@@ -76,6 +82,9 @@ static inline void sfd_dec_ref(sfd_object* o) {
     else sfd_free_object(o);
 }
 
+static inline void sfd_inc(sfd_object* o) { if (!sfd_is_boxed(o)) sfd_inc_ref(o); }
+static inline void sfd_dec(sfd_object* o) { if (!sfd_is_boxed(o)) sfd_dec_ref(o); }
+
 static inline bool sfd_is_ctor(sfd_object* o) { return o->tag <= ScaffoldCtor; }
 
 static inline void sfd_ctor_set(sfd_ctor* ctor, unsigned i, sfd_boxed obj) {
@@ -92,7 +101,7 @@ static inline void sfd_ctor_free(sfd_ctor* ctor) {
     sfd_ctor_fields* ctorf = (sfd_ctor_fields*)ctor;
     for (size_t i = 0; i < ctor->fields; i++) {
         if (sfd_is_boxed(ctorf->fields[i])) continue;
-        sfd_dec_ref(ctorf->fields[i]);
+        sfd_dec(ctorf->fields[i]);
     }
     sfd_free(ctor);
 }

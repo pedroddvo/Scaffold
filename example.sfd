@@ -18,36 +18,27 @@ extern def Int.sub(a b : Int) : Int = "sfd_int_sub"
 extern def Int.mul(a b : Int) : Int = "sfd_int_mul"
 extern def Int.equal(a b : Int) : Bool = "sfd_int_eql"
 
-type Result {
-  ok(a : String),
-  err(b : Int)
-}
-
-type List {
-  cons(a : String, b : List),
+type List[T] {
+  cons(x : T, xs : List[T]),
   nil
 }
 
-def List.length(a : List) : Int =
-  match a {
-    List.cons(_, xs) => xs.length().add(1),
-    List.nil => 0
+def List.singleton[T](x : T) : List[T] = List.cons(x, List.nil)
+
+def List.append[T](xs : List[T], y : T) : List[T] =
+  match xs {
+    List.nil => List.singleton(y),
+    List.cons(x, xs) => List.cons(x, xs.append(y))
   }
 
-def List.replicate(x : String, n : Int) : List =
-  match n {
-    0 => List.nil,
-    _ => List.cons(x, List.replicate(x, n.sub(1)))
-  }
-
-def List.toString(list : List) : String =
-  match list {
+def List.concat(xs : List[String]) : String =
+  match xs {
     List.nil => "[]",
-    List.cons(x, xs) => xs.toString().append(" :: ").append(x)
+    List.cons(x, xs) => x.append(" :: ").append(List.concat(xs))
   }
 
 def main() : Int =
-  let x = List.replicate("apple", 10).toString();
+  let a = List.cons("1", List.cons("2", List.singleton("3")));
   let stdout = IO.getStdout();
-  let _ = stdout.putStr(x);
+  let _ = stdout.putStr(a.append("4").concat());
   0

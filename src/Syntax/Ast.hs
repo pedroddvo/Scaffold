@@ -17,6 +17,7 @@ data Node n a = Node
 data TypeNode v a
   = TSymbol v
   | TArrow (Type v a) (Type v a)
+  | TApp (Type v a) [Type v a]
   | TBorrow (Type v a)
   deriving (Show, Functor, Foldable, Traversable)
 
@@ -32,6 +33,8 @@ data PatternNode v a
 
 type Pattern v = Node (PatternNode v)
 
+type Vars v = [v]
+
 data ExprNode v a
   = Symbol v
   | Numeric Text
@@ -39,9 +42,9 @@ data ExprNode v a
   | Let (Pattern v a) (Expr v a) (Expr v a)
   | Lam (Pattern v a) (Expr v a)
   | App (Expr v a) [Expr v a]
-  | Def v [Pattern v a] (Maybe (Type v a)) (Expr v a) (Expr v a)
+  | Def v (Vars v) [Pattern v a] (Maybe (Type v a)) (Expr v a) (Expr v a)
   | ExternDef v [Pattern v a] (Type v a) Text (Expr v a)
-  | InductiveType v [Ctor v a] (Expr v a)
+  | InductiveType v (Vars v) [Ctor v a] (Expr v a)
   | ExternType v Text (Expr v a)
   | Dot (Expr v a) (DotResolved v a)
   | Match (Expr v a) [MatchBranch v a]

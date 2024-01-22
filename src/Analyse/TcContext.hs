@@ -41,8 +41,10 @@ apply env t' = case t' of
     Just t -> apply env t
     Nothing -> t'
   Type.Arrow a b -> Type.Arrow (apply env a) (apply env b)
+  Type.App a b -> Type.App (apply env a) (map (apply env) b)
   Type.Tuple as -> Type.Tuple (map (apply env) as)
   Type.Borrow t -> Type.Borrow (apply env t)
+  Type.Forall alpha a -> Type.Forall alpha (apply env a)
 
 instantiate :: Unique -> Type -> TcCtxM ()
 instantiate name t = modify (\s -> s {tc_vars = Map.insert name t (tc_vars s)})

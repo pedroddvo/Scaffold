@@ -84,14 +84,20 @@ paren = M.between (symbol "(") (symbol ")") . lexeme
 curly :: Parser a -> Parser a
 curly = M.between (symbol "{") (symbol "}") . lexeme
 
+square :: Parser a -> Parser a
+square = M.between (symbol "[") (symbol "]") . lexeme
+
 typeBase :: Parser (TNode Ast.TypeNode)
 typeBase =
   (Ast.TSymbol <$> nameP)
     <|> (Ast.TBorrow <$> (symbol "&" >> typeP))
     <|> paren typeNode
 
+typeApp :: Parser (TNode Ast.TypeNode)
+typeApp = pfoldr (node $ lexeme typeBase) (square $ M.sepBy1 typeP (symbol ",")) Ast.node_kind Ast.TApp
+
 typeArrow :: Parser (TNode Ast.TypeNode)
-typeArrow = pfoldr (node $ lexeme typeBase) (symbol "->" >> node typeArrow) Ast.node_kind Ast.TArrow
+typeArrow = pfoldr (node $ lexeme typeApp) (symbol "->" >> node typeArrow) Ast.node_kind Ast.TArrow
 
 typeNode :: Parser (TNode Ast.TypeNode)
 typeNode = typeArrow
@@ -142,7 +148,7 @@ exprDot = Ast.node_kind <$> leftRec (node $ lexeme exprBase) (pdot <|> papp)
   where
     pdot = do
       start <- M.getOffset
-      a <- Ast.DotUnresolved <$> ("." >> nameP)
+      a <- Ast.DotUnresolved <$> lexeme ("." >> nameP)
       end <- M.getOffset
       return $ \e -> Ast.Node (Ast.Dot e a) (Ast.node_data e <> Span start end)
 
@@ -193,9 +199,10 @@ stmtInductiveType :: Parser Stmt
 stmtInductiveType = do
   start <- M.getOffset
   name <- symbol "type" >> lexeme nameP
+  vars <- M.option [] forallList
   ctors <- curly $ M.sepBy1 inductiveTypeConstructor (symbol ",")
   end <- M.getOffset
-  return $ \rest -> (Span start end, Ast.InductiveType name ctors rest)
+  return $ \rest -> (Span start end, Ast.InductiveType name vars ctors rest)
 
 inductiveTypeConstructor :: Parser (TNode Ast.Ctor)
 inductiveTypeConstructor = do
@@ -207,11 +214,12 @@ stmtDef :: Parser Stmt
 stmtDef = do
   start <- M.getOffset
   name <- symbol "def" >> lexeme nameP
+  vars <- M.option [] forallList
   args <- argsP defArg
   ret <- M.optional (symbol ":" >> typeP)
   e <- symbol "=" >> exprP
   end <- M.getOffset
-  return $ \rest -> (Span start end, Ast.Def name args ret e rest)
+  return $ \rest -> (Span start end, Ast.Def name vars args ret e rest)
 
 argsP :: Parser [a] -> Parser [a]
 argsP p = concat <$> paren (M.sepBy p (symbol ","))
@@ -235,6 +243,9 @@ stmtExternType = do
   cident <- symbol "=" >> stringLit
   end <- M.getOffset
   return $ \rest -> (Span start end, Ast.ExternType name cident rest)
+
+forallList :: Parser [Name]
+forallList = square (M.sepBy1 nameP (symbol ","))
 
 program :: Parser (Node Ast.ExprNode)
 program = do
